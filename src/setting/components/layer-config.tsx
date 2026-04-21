@@ -42,7 +42,7 @@ function toPlainArr<T> (v: any): T[] {
 
 function resolveLayerUrl (url: string): string {
   const clean = url.replace(/\/+$/, '')
-  if (/(\\/FeatureServer|\\/MapServer)$/i.test(clean)) return `${clean}/0`
+  if (/(FeatureServer|MapServer)$/i.test(clean)) return `${clean}/0`
   return clean
 }
 
@@ -56,8 +56,6 @@ async function fetchServiceFieldsEsriRequest (url: string): Promise<ServiceField
   return (res?.data?.fields ?? []) as ServiceField[]
 }
 
-// Сортирует serviceFields по порядку popupFieldInfos.
-// Поля без записи в popup идут в конец в исходном порядке сервиса.
 function applySortByPopup (
   fields: ServiceField[],
   popupFieldInfos: any[]
@@ -83,13 +81,12 @@ export default function LayerConfig (props: {
   translate: (id: string) => string
   hideLayerEnableSwitch?: boolean
 }) {
-  const { meta, rule, enabled, onEnabledChange, translate, onChange, hideLayerEnableSwitch } = props
+  const { meta, rule, enabled, onEnabledChange, onChange, hideLayerEnableSwitch } = props
 
   const [serviceFields, setServiceFields] = React.useState<ServiceField[]>([])
   const [loading, setLoading] = React.useState(false)
   const [loadError, setLoadError] = React.useState<string | null>(null)
 
-  // drag-and-drop state
   const dragIndexRef = React.useRef<number | null>(null)
   const [dragOver, setDragOver] = React.useState<number | null>(null)
 
@@ -102,27 +99,17 @@ export default function LayerConfig (props: {
 
   const styles = css`
     color: ${C_TEXT};
-
     input, textarea {
       background: ${C_INPUT} !important;
       color: ${C_TEXT} !important;
       border-color: ${C_BORDER} !important;
     }
-
     input::placeholder, textarea::placeholder {
       color: rgba(255,255,255,0.55) !important;
     }
-
-    .ue-drag-row {
-      cursor: grab;
-      transition: background 0.12s;
-    }
-    .ue-drag-row:active {
-      cursor: grabbing;
-    }
-    .ue-drag-over {
-      background: rgba(0, 160, 220, 0.18) !important;
-    }
+    .ue-drag-row { cursor: grab; transition: background 0.12s; }
+    .ue-drag-row:active { cursor: grabbing; }
+    .ue-drag-over { background: rgba(0,160,220,0.18) !important; }
   `
 
   const popupFieldInfos: any[] = (meta as any)?.apiLayer?.popupTemplate?.fieldInfos ?? []
@@ -135,22 +122,18 @@ export default function LayerConfig (props: {
 
   React.useEffect(() => {
     let cancelled = false
-
     if (!meta?.url) {
       setServiceFields([])
       setLoading(false)
       setLoadError(null)
       return
     }
-
     setLoading(true)
     setLoadError(null)
-
     fetchServiceFieldsEsriRequest(meta.url)
       .then(fields => {
         if (cancelled) return
         const filtered = fields.filter(f => !SKIP_TYPES.has(f.type))
-        // применяем порядок из popup
         const sorted = applySortByPopup(filtered, popupFieldInfos)
         setServiceFields(sorted)
       })
@@ -159,10 +142,7 @@ export default function LayerConfig (props: {
         setServiceFields([])
         setLoadError(String(e?.message ?? e))
       })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
+      .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta?.url])
@@ -174,15 +154,11 @@ export default function LayerConfig (props: {
   const getFieldSetting = (sf: ServiceField): ExtendedFieldSetting => {
     const existing = ruleFields.find(f => f.name === sf.name)
     if (existing) return existing
-
     const fi = getPopupFI(sf.name)
-    // видимость: если есть popup — берём fi.visible, иначе true
     const visibleDefault = hasPopupInfos ? !!fi?.visible : true
-    // редактируемость: сначала isEditable из popup (портальный флаг), затем editable сервиса
     const editableDefault = hasPopupInfos
       ? (fi?.isEditable ?? false) && (sf.editable !== false)
       : (sf.editable !== false)
-
     return {
       name: sf.name,
       label: fi?.label || sf.alias || sf.name,
@@ -214,10 +190,7 @@ export default function LayerConfig (props: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceFields])
 
-  // drag-and-drop handlers
-  const handleDragStart = (idx: number) => {
-    dragIndexRef.current = idx
-  }
+  const handleDragStart = (idx: number) => { dragIndexRef.current = idx }
 
   const handleDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault()
@@ -256,43 +229,27 @@ export default function LayerConfig (props: {
   })()
 
   const rowStyle: React.CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 8,
-    minHeight: 32,
-    padding: 0,
-    whiteSpace: 'nowrap'
+    display: 'inline-flex', alignItems: 'center', gap: 8,
+    minHeight: 32, padding: 0, whiteSpace: 'nowrap'
   }
-
   const labelStyle: React.CSSProperties = { whiteSpace: 'nowrap' }
   const disabledLabelStyle: React.CSSProperties = { ...labelStyle, opacity: 0.45 }
-
   const permissionsBlockStyle: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 18,
-    marginBottom: 14
+    display: 'flex', flexDirection: 'row', alignItems: 'center',
+    flexWrap: 'wrap', gap: 18, marginBottom: 14
   }
 
   return (
     <div css={styles}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-        Разрешения
-      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Разрешения</div>
 
       <div style={permissionsBlockStyle}>
         {!hideLayerEnableSwitch && (
           <div style={rowStyle}>
             <span style={labelStyle}>Включить слой</span>
-            <Switch
-              checked={enabled}
-              onChange={(e: any) => onEnabledChange(!!(e?.target ? e.target.checked : e))}
-            />
+            <Switch checked={enabled} onChange={(e: any) => onEnabledChange(!!(e?.target ? e.target.checked : e))} />
           </div>
         )}
-
         <div style={rowStyle}>
           <span style={meta.canAdd ? labelStyle : disabledLabelStyle}>Создание</span>
           <Switch
@@ -301,7 +258,6 @@ export default function LayerConfig (props: {
             onChange={(e: any) => update({ allowCreate: !!(e?.target ? e.target.checked : e) })}
           />
         </div>
-
         <div style={rowStyle}>
           <span style={meta.canUpdate ? labelStyle : disabledLabelStyle}>Редактирование</span>
           <Switch
@@ -317,7 +273,6 @@ export default function LayerConfig (props: {
             }}
           />
         </div>
-
         <div style={rowStyle}>
           <span style={meta.canDelete ? labelStyle : disabledLabelStyle}>Удаление</span>
           <Switch
@@ -326,7 +281,6 @@ export default function LayerConfig (props: {
             onChange={(e: any) => update({ ...(plainRule as any), allowDelete: !!(e?.target ? e.target.checked : e) } as any)}
           />
         </div>
-
         <div style={rowStyle}>
           <span style={svcCanAttr ? labelStyle : disabledLabelStyle}>Атрибуты</span>
           <Switch
@@ -335,7 +289,6 @@ export default function LayerConfig (props: {
             onChange={(e: any) => update({ allowAttrUpdate: !!(e?.target ? e.target.checked : e) })}
           />
         </div>
-
         <div style={rowStyle}>
           <span style={svcCanGeom ? labelStyle : disabledLabelStyle}>Геометрия</span>
           <Switch
@@ -353,7 +306,7 @@ export default function LayerConfig (props: {
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
-              <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600, width: 20 }}>☰</th>
+              <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600, width: 20 }}></th>
               <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Поле</th>
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>Вид</th>
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>Ред.</th>
@@ -363,44 +316,41 @@ export default function LayerConfig (props: {
             </tr>
           </thead>
           <tbody>
-            {effectiveFields.map((fs, idx) => {
-              const isDragOver = dragOver === idx
-              return (
-                <tr
-                  key={fs.name}
-                  className={`ue-drag-row${isDragOver ? ' ue-drag-over' : ''}`}
-                  style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
-                  draggable
-                  onDragStart={() => handleDragStart(idx)}
-                  onDragOver={(e) => handleDragOver(e, idx)}
-                  onDrop={(e) => handleDrop(e, idx)}
-                  onDragEnd={handleDragEnd}
-                >
-                  <td style={{ textAlign: 'center', padding: '4px 6px', color: 'rgba(255,255,255,0.35)', userSelect: 'none' }}>⠿</td>
-                  <td style={{ padding: '4px 6px' }}>{fs.label || fs.name}</td>
-                  <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.visible} onChange={(e: any) => updateField(fs.name, { visible: !!(e?.target ? e.target.checked : e) })} />
-                  </td>
-                  <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.editable} onChange={(e: any) => updateField(fs.name, { editable: !!(e?.target ? e.target.checked : e) })} />
-                  </td>
-                  <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.required} onChange={(e: any) => updateField(fs.name, { required: !!(e?.target ? e.target.checked : e) })} />
-                  </td>
-                  <td style={{ padding: '4px 6px' }}>
-                    <TextInput
-                      size='sm'
-                      value={fs?.defaultValue ?? ''}
-                      onChange={(e: any) => updateField(fs.name, { defaultValue: e.target.value })}
-                      style={{ height: 26, width: '100%' }}
-                    />
-                  </td>
-                  <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.defaultIsArcade} onChange={(e: any) => updateField(fs.name, { defaultIsArcade: !!(e?.target ? e.target.checked : e) })} />
-                  </td>
-                </tr>
-              )
-            })}
+            {effectiveFields.map((fs, idx) => (
+              <tr
+                key={fs.name}
+                className={`ue-drag-row${dragOver === idx ? ' ue-drag-over' : ''}`}
+                style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                draggable
+                onDragStart={() => handleDragStart(idx)}
+                onDragOver={(e) => handleDragOver(e, idx)}
+                onDrop={(e) => handleDrop(e, idx)}
+                onDragEnd={handleDragEnd}
+              >
+                <td style={{ textAlign: 'center', padding: '4px 6px', color: 'rgba(255,255,255,0.35)', userSelect: 'none' }}>⠿</td>
+                <td style={{ padding: '4px 6px' }}>{fs.label || fs.name}</td>
+                <td style={{ textAlign: 'center', padding: '4px 6px' }}>
+                  <Checkbox checked={!!fs?.visible} onChange={(e: any) => updateField(fs.name, { visible: !!(e?.target ? e.target.checked : e) })} />
+                </td>
+                <td style={{ textAlign: 'center', padding: '4px 6px' }}>
+                  <Checkbox checked={!!fs?.editable} onChange={(e: any) => updateField(fs.name, { editable: !!(e?.target ? e.target.checked : e) })} />
+                </td>
+                <td style={{ textAlign: 'center', padding: '4px 6px' }}>
+                  <Checkbox checked={!!fs?.required} onChange={(e: any) => updateField(fs.name, { required: !!(e?.target ? e.target.checked : e) })} />
+                </td>
+                <td style={{ padding: '4px 6px' }}>
+                  <TextInput
+                    size='sm'
+                    value={fs?.defaultValue ?? ''}
+                    onChange={(e: any) => updateField(fs.name, { defaultValue: e.target.value })}
+                    style={{ height: 26, width: '100%' }}
+                  />
+                </td>
+                <td style={{ textAlign: 'center', padding: '4px 6px' }}>
+                  <Checkbox checked={!!fs?.defaultIsArcade} onChange={(e: any) => updateField(fs.name, { defaultIsArcade: !!(e?.target ? e.target.checked : e) })} />
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       )}
