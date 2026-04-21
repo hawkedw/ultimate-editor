@@ -42,7 +42,7 @@ function toPlainArr<T> (v: any): T[] {
 
 function resolveLayerUrl (url: string): string {
   const clean = url.replace(/\/+$/, '')
-  if (/(\/FeatureServer|\/MapServer)$/i.test(clean)) return `${clean}/0`
+  if (/(\\/FeatureServer|\\/MapServer)$/i.test(clean)) return `${clean}/0`
   return clean
 }
 
@@ -54,6 +54,24 @@ async function fetchServiceFieldsEsriRequest (url: string): Promise<ServiceField
     responseType: 'json'
   })
   return (res?.data?.fields ?? []) as ServiceField[]
+}
+
+// Сортирует serviceFields по порядку popupFieldInfos.
+// Поля без записи в popup идут в конец в исходном порядке сервиса.
+function applySortByPopup (
+  fields: ServiceField[],
+  popupFieldInfos: any[]
+): ServiceField[] {
+  if (!popupFieldInfos.length) return fields
+  const popupOrder = new Map<string, number>()
+  popupFieldInfos.forEach((fi, i) => {
+    if (fi?.fieldName) popupOrder.set(String(fi.fieldName), i)
+  })
+  return [...fields].sort((a, b) => {
+    const ia = popupOrder.has(a.name) ? popupOrder.get(a.name)! : 1e9
+    const ib = popupOrder.has(b.name) ? popupOrder.get(b.name)! : 1e9
+    return ia - ib
+  })
 }
 
 export default function LayerConfig (props: {
@@ -70,6 +88,10 @@ export default function LayerConfig (props: {
   const [serviceFields, setServiceFields] = React.useState<ServiceField[]>([])
   const [loading, setLoading] = React.useState(false)
   const [loadError, setLoadError] = React.useState<string | null>(null)
+
+  // drag-and-drop state
+  const dragIndexRef = React.useRef<number | null>(null)
+  const [dragOver, setDragOver] = React.useState<number | null>(null)
 
   const plainRule = toPlain<LayerRule>(rule)
   const ruleFields = toPlainArr<ExtendedFieldSetting>((plainRule as any).fields)
@@ -90,7 +112,26 @@ export default function LayerConfig (props: {
     input::placeholder, textarea::placeholder {
       color: rgba(255,255,255,0.55) !important;
     }
+
+    .ue-drag-row {
+      cursor: grab;
+      transition: background 0.12s;
+    }
+    .ue-drag-row:active {
+      cursor: grabbing;
+    }
+    .ue-drag-over {
+      background: rgba(0, 160, 220, 0.18) !important;
+    }
   `
+
+  const popupFieldInfos: any[] = (meta as any)?.apiLayer?.popupTemplate?.fieldInfos ?? []
+  const hasPopupInfos = Array.isArray(popupFieldInfos) && popupFieldInfos.length > 0
+
+  const getPopupFI = (name: string): any | null => {
+    if (!hasPopupInfos) return null
+    return popupFieldInfos.find(fi => String(fi?.fieldName ?? '') === name) ?? null
+  }
 
   React.useEffect(() => {
     let cancelled = false
@@ -108,7 +149,10 @@ export default function LayerConfig (props: {
     fetchServiceFieldsEsriRequest(meta.url)
       .then(fields => {
         if (cancelled) return
-        setServiceFields(fields.filter(f => !SKIP_TYPES.has(f.type)))
+        const filtered = fields.filter(f => !SKIP_TYPES.has(f.type))
+        // применяем порядок из popup
+        const sorted = applySortByPopup(filtered, popupFieldInfos)
+        setServiceFields(sorted)
       })
       .catch((e) => {
         if (cancelled) return
@@ -120,17 +164,11 @@ export default function LayerConfig (props: {
       })
 
     return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta?.url])
 
   const update = (patch: Partial<LayerRule>) => {
     onChange(Immutable({ ...plainRule, ...patch, id: meta.key, url: meta.url, title: meta.title }) as any)
-  }
-
-  const popupFieldInfos: any[] = (meta as any)?.apiLayer?.popupTemplate?.fieldInfos ?? []
-  const hasPopupInfos = Array.isArray(popupFieldInfos) && popupFieldInfos.length > 0
-  const getPopupFI = (name: string): any | null => {
-    if (!hasPopupInfos) return null
-    return popupFieldInfos.find(fi => String(fi?.fieldName ?? '') === name) ?? null
   }
 
   const getFieldSetting = (sf: ServiceField): ExtendedFieldSetting => {
@@ -138,12 +176,16 @@ export default function LayerConfig (props: {
     if (existing) return existing
 
     const fi = getPopupFI(sf.name)
+    // видимость: если есть popup — берём fi.visible, иначе true
     const visibleDefault = hasPopupInfos ? !!fi?.visible : true
-    const editableDefault = (sf.editable !== false) && (fi?.isEditable ?? true)
+    // редактируемость: сначала isEditable из popup (портальный флаг), затем editable сервиса
+    const editableDefault = hasPopupInfos
+      ? (fi?.isEditable ?? false) && (sf.editable !== false)
+      : (sf.editable !== false)
 
     return {
       name: sf.name,
-      label: sf.alias || sf.name,
+      label: fi?.label || sf.alias || sf.name,
       visible: visibleDefault,
       editable: editableDefault,
       required: false,
@@ -172,6 +214,37 @@ export default function LayerConfig (props: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceFields])
 
+  // drag-and-drop handlers
+  const handleDragStart = (idx: number) => {
+    dragIndexRef.current = idx
+  }
+
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault()
+    setDragOver(idx)
+  }
+
+  const handleDrop = (e: React.DragEvent, dropIdx: number) => {
+    e.preventDefault()
+    const fromIdx = dragIndexRef.current
+    if (fromIdx === null || fromIdx === dropIdx) {
+      dragIndexRef.current = null
+      setDragOver(null)
+      return
+    }
+    const next = [...effectiveFields]
+    const [moved] = next.splice(fromIdx, 1)
+    next.splice(dropIdx, 0, moved)
+    setFields(next)
+    dragIndexRef.current = null
+    setDragOver(null)
+  }
+
+  const handleDragEnd = () => {
+    dragIndexRef.current = null
+    setDragOver(null)
+  }
+
   const svcCanAttr = !!meta.canUpdate
   const svcCanGeom = (() => {
     const l = meta.apiLayer
@@ -191,14 +264,8 @@ export default function LayerConfig (props: {
     whiteSpace: 'nowrap'
   }
 
-  const labelStyle: React.CSSProperties = {
-    whiteSpace: 'nowrap'
-  }
-
-  const disabledLabelStyle: React.CSSProperties = {
-    ...labelStyle,
-    opacity: 0.45
-  }
+  const labelStyle: React.CSSProperties = { whiteSpace: 'nowrap' }
+  const disabledLabelStyle: React.CSSProperties = { ...labelStyle, opacity: 0.45 }
 
   const permissionsBlockStyle: React.CSSProperties = {
     display: 'flex',
@@ -286,6 +353,7 @@ export default function LayerConfig (props: {
         <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
+              <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600, width: 20 }}>☰</th>
               <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Поле</th>
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>Вид</th>
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>Ред.</th>
@@ -295,30 +363,40 @@ export default function LayerConfig (props: {
             </tr>
           </thead>
           <tbody>
-            {serviceFields.map(sf => {
-              const fs = effectiveFields.find(f => f.name === sf.name) as ExtendedFieldSetting
+            {effectiveFields.map((fs, idx) => {
+              const isDragOver = dragOver === idx
               return (
-                <tr key={sf.name} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                  <td style={{ padding: '4px 6px' }}>{sf.alias || sf.name}</td>
+                <tr
+                  key={fs.name}
+                  className={`ue-drag-row${isDragOver ? ' ue-drag-over' : ''}`}
+                  style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                  draggable
+                  onDragStart={() => handleDragStart(idx)}
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDrop={(e) => handleDrop(e, idx)}
+                  onDragEnd={handleDragEnd}
+                >
+                  <td style={{ textAlign: 'center', padding: '4px 6px', color: 'rgba(255,255,255,0.35)', userSelect: 'none' }}>⠿</td>
+                  <td style={{ padding: '4px 6px' }}>{fs.label || fs.name}</td>
                   <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.visible} onChange={(e: any) => updateField(sf.name, { visible: !!(e?.target ? e.target.checked : e) })} />
+                    <Checkbox checked={!!fs?.visible} onChange={(e: any) => updateField(fs.name, { visible: !!(e?.target ? e.target.checked : e) })} />
                   </td>
                   <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.editable} onChange={(e: any) => updateField(sf.name, { editable: !!(e?.target ? e.target.checked : e) })} />
+                    <Checkbox checked={!!fs?.editable} onChange={(e: any) => updateField(fs.name, { editable: !!(e?.target ? e.target.checked : e) })} />
                   </td>
                   <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.required} onChange={(e: any) => updateField(sf.name, { required: !!(e?.target ? e.target.checked : e) })} />
+                    <Checkbox checked={!!fs?.required} onChange={(e: any) => updateField(fs.name, { required: !!(e?.target ? e.target.checked : e) })} />
                   </td>
                   <td style={{ padding: '4px 6px' }}>
                     <TextInput
                       size='sm'
                       value={fs?.defaultValue ?? ''}
-                      onChange={(e: any) => updateField(sf.name, { defaultValue: e.target.value })}
+                      onChange={(e: any) => updateField(fs.name, { defaultValue: e.target.value })}
                       style={{ height: 26, width: '100%' }}
                     />
                   </td>
                   <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                    <Checkbox checked={!!fs?.defaultIsArcade} onChange={(e: any) => updateField(sf.name, { defaultIsArcade: !!(e?.target ? e.target.checked : e) })} />
+                    <Checkbox checked={!!fs?.defaultIsArcade} onChange={(e: any) => updateField(fs.name, { defaultIsArcade: !!(e?.target ? e.target.checked : e) })} />
                   </td>
                 </tr>
               )
