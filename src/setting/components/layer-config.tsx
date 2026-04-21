@@ -49,22 +49,14 @@ function resolveLayerUrl (url: string): string {
 async function fetchServiceFieldsEsriRequest (url: string): Promise<ServiceField[]> {
   const [esriRequest] = await loadArcGISJSAPIModules(['esri/request']) as any[]
   const target = resolveLayerUrl(url)
-  const res = await esriRequest(target, {
-    query: { f: 'json' },
-    responseType: 'json'
-  })
+  const res = await esriRequest(target, { query: { f: 'json' }, responseType: 'json' })
   return (res?.data?.fields ?? []) as ServiceField[]
 }
 
-function applySortByPopup (
-  fields: ServiceField[],
-  popupFieldInfos: any[]
-): ServiceField[] {
-  if (!popupFieldInfos.length) return fields
+function applySortByPopup (fields: ServiceField[], popupFieldInfos: any[]): ServiceField[] {
+  if (!popupFieldInfos?.length) return fields
   const popupOrder = new Map<string, number>()
-  popupFieldInfos.forEach((fi, i) => {
-    if (fi?.fieldName) popupOrder.set(String(fi.fieldName), i)
-  })
+  popupFieldInfos.forEach((fi, i) => { if (fi?.fieldName) popupOrder.set(String(fi.fieldName), i) })
   return [...fields].sort((a, b) => {
     const ia = popupOrder.has(a.name) ? popupOrder.get(a.name)! : 1e9
     const ib = popupOrder.has(b.name) ? popupOrder.get(b.name)! : 1e9
@@ -104,16 +96,18 @@ export default function LayerConfig (props: {
       color: ${C_TEXT} !important;
       border-color: ${C_BORDER} !important;
     }
-    input::placeholder, textarea::placeholder {
-      color: rgba(255,255,255,0.55) !important;
-    }
+    input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.55) !important; }
     .ue-drag-row { cursor: grab; transition: background 0.12s; }
     .ue-drag-row:active { cursor: grabbing; }
     .ue-drag-over { background: rgba(0,160,220,0.18) !important; }
   `
 
-  const popupFieldInfos: any[] = (meta as any)?.apiLayer?.popupTemplate?.fieldInfos ?? []
-  const hasPopupInfos = Array.isArray(popupFieldInfos) && popupFieldInfos.length > 0
+  const popupFieldInfos: any[] = React.useMemo(
+    () => (meta as any)?.apiLayer?.popupTemplate?.fieldInfos ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [meta?.apiLayer?.popupTemplate?.fieldInfos]
+  )
+  const hasPopupInfos = popupFieldInfos.length > 0
 
   const getPopupFI = (name: string): any | null => {
     if (!hasPopupInfos) return null
@@ -134,8 +128,7 @@ export default function LayerConfig (props: {
       .then(fields => {
         if (cancelled) return
         const filtered = fields.filter(f => !SKIP_TYPES.has(f.type))
-        const sorted = applySortByPopup(filtered, popupFieldInfos)
-        setServiceFields(sorted)
+        setServiceFields(filtered)
       })
       .catch((e) => {
         if (cancelled) return
@@ -170,41 +163,54 @@ export default function LayerConfig (props: {
     }
   }
 
+  // Ключевое: если ruleFields уже есть — используем их порядок как основу,
+  // добавляем в конец поля сервиса которых ещё нет в rule.
+  // Если ruleFields пустые (первая загрузка) — сортируем по popup.
   const effectiveFields: ExtendedFieldSetting[] = React.useMemo(() => {
-    return serviceFields.map(sf => getFieldSetting(sf))
+    if (serviceFields.length === 0) return []
+
+    if (ruleFields.length > 0) {
+      // Порядок из ruleFields — уважаем DnD и предыдущие сохранения
+      const svcMap = new Map(serviceFields.map(sf => [sf.name, sf]))
+      const ordered: ExtendedFieldSetting[] = []
+      // сначала — поля в порядке ruleFields (только те, что ещё есть в сервисе)
+      for (const rf of ruleFields) {
+        if (svcMap.has(rf.name)) ordered.push(rf)
+      }
+      // затем — новые поля сервиса которых нет в rule
+      for (const sf of serviceFields) {
+        if (!ordered.some(f => f.name === sf.name)) {
+          ordered.push(getFieldSetting(sf))
+        }
+      }
+      return ordered
+    }
+
+    // Первая загрузка: сортируем по popup и строим из сервиса
+    const sorted = applySortByPopup(serviceFields, popupFieldInfos)
+    return sorted.map(sf => getFieldSetting(sf))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceFields, ruleFields])
+  }, [serviceFields, ruleFields, popupFieldInfos])
 
   const setFields = (next: ExtendedFieldSetting[]) => update({ fields: next as any })
 
   const updateField = (name: string, patch: Partial<ExtendedFieldSetting>) => {
-    const nextAll = effectiveFields.map(f => (f.name === name ? { ...f, ...patch } : f))
-    setFields(nextAll)
+    setFields(effectiveFields.map(f => f.name === name ? { ...f, ...patch } : f))
   }
 
+  // Инициализация: записываем поля в rule при первой загрузке
   React.useEffect(() => {
-    if (serviceFields.length === 0) return
-    const missing = serviceFields.some(sf => !ruleFields.some(f => f.name === sf.name))
-    if (!missing) return
+    if (serviceFields.length === 0 || ruleFields.length > 0) return
     setFields(effectiveFields)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceFields])
+  }, [serviceFields, popupFieldInfos])
 
   const handleDragStart = (idx: number) => { dragIndexRef.current = idx }
-
-  const handleDragOver = (e: React.DragEvent, idx: number) => {
-    e.preventDefault()
-    setDragOver(idx)
-  }
-
+  const handleDragOver = (e: React.DragEvent, idx: number) => { e.preventDefault(); setDragOver(idx) }
   const handleDrop = (e: React.DragEvent, dropIdx: number) => {
     e.preventDefault()
     const fromIdx = dragIndexRef.current
-    if (fromIdx === null || fromIdx === dropIdx) {
-      dragIndexRef.current = null
-      setDragOver(null)
-      return
-    }
+    if (fromIdx === null || fromIdx === dropIdx) { dragIndexRef.current = null; setDragOver(null); return }
     const next = [...effectiveFields]
     const [moved] = next.splice(fromIdx, 1)
     next.splice(dropIdx, 0, moved)
@@ -212,11 +218,7 @@ export default function LayerConfig (props: {
     dragIndexRef.current = null
     setDragOver(null)
   }
-
-  const handleDragEnd = () => {
-    dragIndexRef.current = null
-    setDragOver(null)
-  }
+  const handleDragEnd = () => { dragIndexRef.current = null; setDragOver(null) }
 
   const svcCanAttr = !!meta.canUpdate
   const svcCanGeom = (() => {
@@ -228,16 +230,10 @@ export default function LayerConfig (props: {
     return true
   })()
 
-  const rowStyle: React.CSSProperties = {
-    display: 'inline-flex', alignItems: 'center', gap: 8,
-    minHeight: 32, padding: 0, whiteSpace: 'nowrap'
-  }
+  const rowStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: 32, padding: 0, whiteSpace: 'nowrap' }
   const labelStyle: React.CSSProperties = { whiteSpace: 'nowrap' }
   const disabledLabelStyle: React.CSSProperties = { ...labelStyle, opacity: 0.45 }
-  const permissionsBlockStyle: React.CSSProperties = {
-    display: 'flex', flexDirection: 'row', alignItems: 'center',
-    flexWrap: 'wrap', gap: 18, marginBottom: 14
-  }
+  const permissionsBlockStyle: React.CSSProperties = { display: 'flex', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 18, marginBottom: 14 }
 
   return (
     <div css={styles}>
@@ -252,50 +248,31 @@ export default function LayerConfig (props: {
         )}
         <div style={rowStyle}>
           <span style={meta.canAdd ? labelStyle : disabledLabelStyle}>Создание</span>
-          <Switch
-            checked={meta.canAdd && plainRule.allowCreate === true}
-            disabled={!meta.canAdd}
-            onChange={(e: any) => update({ allowCreate: !!(e?.target ? e.target.checked : e) })}
-          />
+          <Switch checked={meta.canAdd && plainRule.allowCreate === true} disabled={!meta.canAdd}
+            onChange={(e: any) => update({ allowCreate: !!(e?.target ? e.target.checked : e) })} />
         </div>
         <div style={rowStyle}>
           <span style={meta.canUpdate ? labelStyle : disabledLabelStyle}>Редактирование</span>
-          <Switch
-            checked={meta.canUpdate && plainRule.allowUpdate === true}
-            disabled={!meta.canUpdate}
+          <Switch checked={meta.canUpdate && plainRule.allowUpdate === true} disabled={!meta.canUpdate}
             onChange={(e: any) => {
               const v = !!(e?.target ? e.target.checked : e)
-              update({
-                allowUpdate: v,
-                allowAttrUpdate: v ? (svcCanAttr ? (plainRule.allowAttrUpdate ?? true) : false) : false,
-                allowGeomUpdate: v ? (svcCanGeom ? (plainRule.allowGeomUpdate ?? true) : false) : false
-              })
-            }}
-          />
+              update({ allowUpdate: v, allowAttrUpdate: v ? (svcCanAttr ? (plainRule.allowAttrUpdate ?? true) : false) : false, allowGeomUpdate: v ? (svcCanGeom ? (plainRule.allowGeomUpdate ?? true) : false) : false })
+            }} />
         </div>
         <div style={rowStyle}>
           <span style={meta.canDelete ? labelStyle : disabledLabelStyle}>Удаление</span>
-          <Switch
-            checked={meta.canDelete && plainRule.allowDelete === true}
-            disabled={!meta.canDelete}
-            onChange={(e: any) => update({ ...(plainRule as any), allowDelete: !!(e?.target ? e.target.checked : e) } as any)}
-          />
+          <Switch checked={meta.canDelete && plainRule.allowDelete === true} disabled={!meta.canDelete}
+            onChange={(e: any) => update({ ...(plainRule as any), allowDelete: !!(e?.target ? e.target.checked : e) } as any)} />
         </div>
         <div style={rowStyle}>
           <span style={svcCanAttr ? labelStyle : disabledLabelStyle}>Атрибуты</span>
-          <Switch
-            checked={svcCanAttr && plainRule.allowAttrUpdate === true}
-            disabled={!svcCanAttr}
-            onChange={(e: any) => update({ allowAttrUpdate: !!(e?.target ? e.target.checked : e) })}
-          />
+          <Switch checked={svcCanAttr && plainRule.allowAttrUpdate === true} disabled={!svcCanAttr}
+            onChange={(e: any) => update({ allowAttrUpdate: !!(e?.target ? e.target.checked : e) })} />
         </div>
         <div style={rowStyle}>
           <span style={svcCanGeom ? labelStyle : disabledLabelStyle}>Геометрия</span>
-          <Switch
-            checked={svcCanGeom && plainRule.allowGeomUpdate === true}
-            disabled={!svcCanGeom}
-            onChange={(e: any) => update({ allowGeomUpdate: !!(e?.target ? e.target.checked : e) })}
-          />
+          <Switch checked={svcCanGeom && plainRule.allowGeomUpdate === true} disabled={!svcCanGeom}
+            onChange={(e: any) => update({ allowGeomUpdate: !!(e?.target ? e.target.checked : e) })} />
         </div>
       </div>
 
@@ -339,12 +316,9 @@ export default function LayerConfig (props: {
                   <Checkbox checked={!!fs?.required} onChange={(e: any) => updateField(fs.name, { required: !!(e?.target ? e.target.checked : e) })} />
                 </td>
                 <td style={{ padding: '4px 6px' }}>
-                  <TextInput
-                    size='sm'
-                    value={fs?.defaultValue ?? ''}
+                  <TextInput size='sm' value={fs?.defaultValue ?? ''}
                     onChange={(e: any) => updateField(fs.name, { defaultValue: e.target.value })}
-                    style={{ height: 26, width: '100%' }}
-                  />
+                    style={{ height: 26, width: '100%' }} />
                 </td>
                 <td style={{ textAlign: 'center', padding: '4px 6px' }}>
                   <Checkbox checked={!!fs?.defaultIsArcade} onChange={(e: any) => updateField(fs.name, { defaultIsArcade: !!(e?.target ? e.target.checked : e) })} />
