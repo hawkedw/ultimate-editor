@@ -11,16 +11,12 @@ interface Props {
     getFieldPolicy: (layer: __esri.FeatureLayer | any) => FieldPolicy
   }
   isNew?: boolean
-
   onSaveNew?: (draftAttrs: Record<string, any>) => Promise<void>
   onCancelNew?: () => Promise<void> | void
-
   onSaveExisting?: (draftAttrs: Record<string, any>) => Promise<void>
   onSaved?: () => void
   onCancel?: () => void
-
   onDeleted?: () => void
-
   onRequestDelete?: () => void
   deleteConfirm?: boolean
   onCancelDelete?: () => void
@@ -54,47 +50,49 @@ const FeatureFormPanel = ({
   const layer = item?.layer as any
   const layerTitle = layer?.title || 'Объект'
 
-  // политика по слою полностью из useUltimateEditor
   const policy = React.useMemo(() => {
     if (!layer) {
-      return {
-        hidden: new Set<string>(),
-        readonly: new Set<string>(),
-        labels: new Map<string, string>()
-      }
+      return { hidden: new Set<string>(), readonly: new Set<string>(), labels: new Map<string, string>(), order: [] as string[] }
     }
     return ue.getFieldPolicy(layer)
   }, [ue, layer])
 
   const isPolicyEmpty = React.useMemo(() => {
-    return policy.hidden.size === 0 && policy.readonly.size === 0 && policy.labels.size === 0
+    return (
+      policy.hidden.size === 0 &&
+      policy.readonly.size === 0 &&
+      policy.labels.size === 0 &&
+      (!policy.order || policy.order.length === 0)
+    )
   }, [policy])
 
-  // FormTemplate на основе policy (если политика пустая — не трогаем смарт-форму портала)
   const formTemplate = React.useMemo(() => {
     if (!layer) return null
-    const fields = ((layer?.fields || []) as any[])
-    if (!fields.length) return null
+    const layerFields = ((layer?.fields || []) as any[])
+    if (!layerFields.length) return null
+    if (isPolicyEmpty) return null
 
-    if (isPolicyEmpty) {
-      // нет собственной политики → даём FeatureForm использовать Smart Form / popupTemplate слоя
-      return null
-    }
+    const byName = new Map<string, any>(
+      layerFields.filter((f: any) => f?.name).map((f: any) => [String(f.name), f])
+    )
+
+    // если есть явный порядок из настроек — используем его, иначе порядок сервиса
+    const orderedFields: any[] = policy.order?.length
+      ? policy.order.map(name => byName.get(name)).filter(Boolean)
+      : layerFields
 
     const expressionInfos: any[] = []
-    const elements = fields
+    const elements = orderedFields
       .filter((f: any) => f?.name && !policy.hidden.has(String(f.name)))
       .map((f: any, i: number) => {
         const name = String(f.name)
         const exprName = `ue_single_edit_${name.replace(/[^A-Za-z0-9_]/g, '_')}_${i}`
-
         expressionInfos.push({
           name: exprName,
           title: exprName,
           expression: policy.readonly.has(name) ? 'false' : 'true',
           returnType: 'boolean'
         })
-
         return {
           type: 'field',
           fieldName: name,
@@ -106,21 +104,13 @@ const FeatureFormPanel = ({
     return { expressionInfos, elements } as any
   }, [layer, policy, isPolicyEmpty])
 
-  // реально редактируемые поля
   const editableFieldNames = React.useMemo(() => {
     const out = new Set<string>()
     const fields = ((layer?.fields || []) as any[])
-
-    // политика пустая — редактируемость задаёт портал, мы не запрещаем поля
     if (isPolicyEmpty) {
-      for (const f of fields) {
-        const name = String(f?.name || '')
-        if (!name) continue
-        out.add(name)
-      }
+      for (const f of fields) { const name = String(f?.name || ''); if (name) out.add(name) }
       return out
     }
-
     for (const f of fields) {
       const name = String(f?.name || '')
       if (!name) continue
@@ -134,43 +124,24 @@ const FeatureFormPanel = ({
   React.useEffect(() => {
     const host = hostRef.current
     if (!host || !item?.graphic || !layer) return
-
     host.innerHTML = ''
 
-console.log('[UE][FFP] init', {
-  layerTitle,
-  hasHost: !!host,
-  hasGraphic: !!item?.graphic,
-  oid: item?.oid,
-  isNew,
-  hidden: Array.from(policy.hidden),
-  readonly: Array.from(policy.readonly),
-  labels: Array.from(policy.labels.entries()),
-  editableFieldNames: Array.from(editableFieldNames),
-  attrs: item?.graphic?.attributes
-})
-
-try {
-  const ff = new FeatureForm({
-    container: host,
-    feature: item.graphic,
-    layer,
-    ...(formTemplate ? { formTemplate } as any : {})
-  } as any)
-
-  if (formTemplate) (ff as any).formTemplate = formTemplate
-  featureFormRef.current = ff
-  console.log('[UE][FFP] FeatureForm created')
-} catch (e) {
-  console.error('[UE][FFP] FeatureForm init error', e, {
-    attrs: item?.graphic?.attributes,
-    readonly: Array.from(policy.readonly),
-    hidden: Array.from(policy.hidden)
-  })
-}
+    let ff: any
+    try {
+      ff = new FeatureForm({
+        container: host,
+        feature: item.graphic,
+        layer,
+        ...(formTemplate ? { formTemplate } as any : {})
+      } as any)
+      if (formTemplate) (ff as any).formTemplate = formTemplate
+      featureFormRef.current = ff
+    } catch (e) {
+      console.error('[UE][FFP] FeatureForm init error', e)
+    }
 
     return () => {
-      try { ff.destroy() } catch {}
+      try { ff?.destroy() } catch {}
       featureFormRef.current = null
       if (host) host.innerHTML = ''
     }
@@ -178,29 +149,16 @@ try {
 
   const handleSave = async () => {
     const rawValues = featureFormRef.current?.getValues?.() ?? {}
-
     const values = Object.fromEntries(
       Object.entries(rawValues).filter(([k]) => editableFieldNames.has(String(k)))
     )
-
-    if (isNew) {
-      await onSaveNew?.(values)
-      return
-    }
-
-    if (onSaveExisting) {
-      await onSaveExisting(values)
-      return
-    }
-
+    if (isNew) { await onSaveNew?.(values); return }
+    if (onSaveExisting) { await onSaveExisting(values); return }
     onSaved?.()
   }
 
   const handleCancel = async () => {
-    if (isNew) {
-      await onCancelNew?.()
-      return
-    }
+    if (isNew) { await onCancelNew?.(); return }
     onCancel?.()
   }
 
@@ -208,32 +166,11 @@ try {
     <div className='ue-form-host'>
       <div className='ue-form-header'>
         <div className='ue-form-title'>{layerTitle}</div>
-
         <div className='ue-form-actions'>
-          <button
-            type='button'
-            className='ue-btn ue-btn--secondary ue-btn--sm'
-            onClick={handleCancel}
-          >
-            Отмена
-          </button>
-
-          <button
-            type='button'
-            className='ue-btn ue-btn--sm'
-            onClick={handleSave}
-          >
-            Сохранить
-          </button>
-
+          <button type='button' className='ue-btn ue-btn--secondary ue-btn--sm' onClick={handleCancel}>Отмена</button>
+          <button type='button' className='ue-btn ue-btn--sm' onClick={handleSave}>Сохранить</button>
           {!isNew && !!onRequestDelete && (
-            <button
-              type='button'
-              className='ue-btn ue-btn--danger ue-btn--sm'
-              onClick={onRequestDelete}
-            >
-              Удалить
-            </button>
+            <button type='button' className='ue-btn ue-btn--danger ue-btn--sm' onClick={onRequestDelete}>Удалить</button>
           )}
         </div>
       </div>
@@ -242,20 +179,8 @@ try {
         <div className='ue-form-delete-row'>
           <div className='ue-form-delete-text'>Удалить объект?</div>
           <div className='ue-form-delete-actions'>
-            <button
-              type='button'
-              className='ue-btn ue-btn--secondary ue-btn--sm'
-              onClick={onCancelDelete}
-            >
-              Нет
-            </button>
-            <button
-              type='button'
-              className='ue-btn ue-btn--danger ue-btn--sm'
-              onClick={onConfirmDelete}
-            >
-              Да
-            </button>
+            <button type='button' className='ue-btn ue-btn--secondary ue-btn--sm' onClick={onCancelDelete}>Нет</button>
+            <button type='button' className='ue-btn ue-btn--danger ue-btn--sm' onClick={onConfirmDelete}>Да</button>
           </div>
         </div>
       )}

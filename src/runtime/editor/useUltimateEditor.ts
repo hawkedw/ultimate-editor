@@ -25,6 +25,7 @@ export interface FieldPolicy {
   hidden: Set<string>
   readonly: Set<string>
   labels: Map<string, string>
+  order: string[]
 }
 
 function toPlainFields (raw: any): FieldSetting[] {
@@ -298,11 +299,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   function ensureMergePreviewLayer (v: any) {
     if (mergePreviewLayerRef.current) return
-
-    const gl = new GraphicsLayer({
-      listMode: 'hide'
-    } as any)
-
+    const gl = new GraphicsLayer({ listMode: 'hide' } as any)
     v.map.add(gl)
     mergePreviewLayerRef.current = gl
   }
@@ -314,24 +311,15 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   async function previewMergeItem (oid: number | null) {
     clearMergePreview()
-
     if (oid == null) return
     if (!viewRef.current || !sameLayerSelected || !selectedLayer) return
-
     const item = sel.find((s) => s.oid === oid)
     const geom = item?.graphic?.geometry
     if (!geom) return
-
     ensureMergePreviewLayer(viewRef.current)
-
-    const gg = new Graphic({
-      geometry: geom,
-      symbol: mergePreviewSymbol()
-    } as any)
-
+    const gg = new Graphic({ geometry: geom, symbol: mergePreviewSymbol() } as any)
     mergePreviewGraphicRef.current = gg as any
     mergePreviewLayerRef.current?.add(gg as any)
-
     dlog('[UE] merge preview graphic oid=', oid)
   }
 
@@ -343,7 +331,6 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       const r = resolveRuleEffective(cfgRef.current, l)
       if (r.allowGeomUpdate === true && (l as any).geometryType === 'polygon') return l as FeatureLayer
     }
-
     const all = v?.map?.allLayers?.toArray?.() || []
     for (let i = all.length - 1; i >= 0; i--) {
       const l = all[i]
@@ -351,43 +338,23 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       const r = resolveRuleEffective(cfgRef.current, l)
       if (r.allowGeomUpdate === true && (l as any).geometryType === 'polygon') return l as FeatureLayer
     }
-
     return null
   }
 
   const activeSplitLayer = getTopSplittableLayer(viewRef.current)
-
   const canSplit = !!activeSplitLayer
-
-  const canReshape = !!layerRule?.allowGeomUpdate &&
-    sel.length === 1 &&
-    sameLayerSelected &&
-    (selectedLayer as any)?.geometryType === 'polygon'
-
-  const canMerge = !!layerRule?.allowGeomUpdate &&
-    sel.length >= 2 &&
-    sameLayerSelected &&
-    (selectedLayer as any)?.geometryType === 'polygon'
-
+  const canReshape = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
+  const canMerge = !!layerRule?.allowGeomUpdate && sel.length >= 2 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
   const canGeom = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected
   const canUndo = undoStack.length > 0
   const canRedo = redoStack.length > 0
 
   React.useEffect(() => {
-    if (!canMerge && mergeMode) {
-      setMergeMode(false)
-      clearMergePreview()
-    }
+    if (!canMerge && mergeMode) { setMergeMode(false); clearMergePreview() }
   }, [canMerge, mergeMode])
 
-  React.useEffect(() => {
-    if (!mergeMode) clearMergePreview()
-  }, [mergeMode])
-
-  React.useEffect(() => {
-    if (!mergeMode) return
-    clearMergePreview()
-  }, [sel, mergeMode])
+  React.useEffect(() => { if (!mergeMode) clearMergePreview() }, [mergeMode])
+  React.useEffect(() => { if (!mergeMode) return; clearMergePreview() }, [sel, mergeMode])
 
   React.useEffect(() => {
     if (sel.length === 1 && canGeom) return
@@ -401,40 +368,16 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     if (!activeGeomEdit && geomChecked && geometry.sketchMode === 'idle' && sel.length !== 1) setGeomChecked(false)
   }, [geometry.sketchMode, geomChecked, sel.length])
 
-
   function refreshEditableLayers (v: any) {
-    const all = (v?.map?.allLayers?.toArray?.() || [])
-      .filter((l: any) => isFeatureLayer(l) && l.visible)
-
-    const creatable = all.filter((l: any) => {
-      const r = resolveRuleEffective(cfgRef.current, l)
-      return r.allowCreate === true
-    }) as FeatureLayer[]
-
-    const attrEditable = all.filter((l: any) => {
-      const r = resolveRuleEffective(cfgRef.current, l)
-      return r.allowAttrUpdate === true
-    }) as FeatureLayer[]
-
+    const all = (v?.map?.allLayers?.toArray?.() || []).filter((l: any) => isFeatureLayer(l) && l.visible)
+    const creatable = all.filter((l: any) => resolveRuleEffective(cfgRef.current, l).allowCreate === true) as FeatureLayer[]
+    const attrEditable = all.filter((l: any) => resolveRuleEffective(cfgRef.current, l).allowAttrUpdate === true) as FeatureLayer[]
     setEditableLayers(creatable)
     setAttrEditableLayers(attrEditable)
-
-    setShowSplitButton(all.some((l: any) => {
-      const r = resolveRuleEffective(cfgRef.current, l)
-      return r.allowGeomUpdate === true && (l as any).geometryType === 'polygon'
-    }))
-
+    setShowSplitButton(all.some((l: any) => resolveRuleEffective(cfgRef.current, l).allowGeomUpdate === true && (l as any).geometryType === 'polygon'))
     if (DBG()) {
-      dlog('[UE] creatableLayers:', creatable.map((l: any) => ({
-        title: l.title,
-        id: l.id,
-        templates: l.templates?.length
-      })))
-
-      dlog('[UE] attrEditableLayers:', attrEditable.map((l: any) => ({
-        title: l.title,
-        id: l.id
-      })))
+      dlog('[UE] creatableLayers:', creatable.map((l: any) => ({ title: l.title, id: l.id, templates: l.templates?.length })))
+      dlog('[UE] attrEditableLayers:', attrEditable.map((l: any) => ({ title: l.title, id: l.id })))
     }
   }
 
@@ -460,25 +403,20 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   async function applyBoxSelect (extent: __esri.Extent) {
     const v = viewRef.current
     if (!v) return
-
     const fixedLayer = sel.length ? (sel[0].layer as any) : null
     const targetLayer = fixedLayer && isSelectableLayer(fixedLayer) ? fixedLayer : getTopSelectableLayer(v)
     if (!targetLayer) return
-
     try {
       await targetLayer.load?.()
       const lv = await v.whenLayerView(targetLayer)
-
       const q = targetLayer.createQuery()
       q.geometry = extent
       q.spatialRelationship = 'intersects'
       q.returnGeometry = true
       q.outFields = ['*']
       ;(q as any).returnDomainNames = false
-
       const fs = await lv.queryFeatures(q)
       const feats = fs?.features || []
-
       const mode = toolRef.current === 'remove' ? 'remove' : 'add'
       for (const g of feats) await selection.selectGraphic(g, mode as any)
     } catch (e) {
@@ -488,11 +426,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   function ensureBoxLayer (v: any) {
     if (boxLayerRef.current) return
-
-    const gl = new GraphicsLayer({
-      listMode: 'hide'
-    } as any)
-
+    const gl = new GraphicsLayer({ listMode: 'hide' } as any)
     v.map.add(gl)
     boxLayerRef.current = gl
   }
@@ -521,32 +455,21 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     refreshEditableLayers(v)
 
     const visHandles: __esri.Handle[] = []
-
     const attachVisibleWatches = () => {
-      while (visHandles.length) {
-        try { visHandles.pop().remove() } catch {}
-      }
+      while (visHandles.length) { try { visHandles.pop().remove() } catch {} }
       const all = v?.map?.allLayers?.toArray?.() || []
       for (const l of all) {
         if (!isFeatureLayer(l)) continue
-        try {
-          const h = l.watch('visible', () => refreshEditableLayers(v))
-          visHandles.push(h)
-        } catch {}
+        try { const h = l.watch('visible', () => refreshEditableLayers(v)); visHandles.push(h) } catch {}
       }
     }
 
     attachVisibleWatches()
-    const hLayers = v.map?.allLayers?.on?.('change', () => {
-      attachVisibleWatches()
-      refreshEditableLayers(v)
-    })
+    const hLayers = v.map?.allLayers?.on?.('change', () => { attachVisibleWatches(); refreshEditableLayers(v) })
 
     ;(async () => {
       const layers = (v?.map?.allLayers?.toArray?.() || []).filter((l: any) => isFeatureLayer(l))
-      for (const l of layers) {
-        try { l.outFields = ['*'] } catch {}
-      }
+      for (const l of layers) { try { l.outFields = ['*'] } catch {} }
       await Promise.allSettled(layers.map((l: any) => l.load?.()))
     })()
 
@@ -572,11 +495,9 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       for (const r of results) {
         const g = r?.graphic
         if (!isFeatureLayer(g?.layer)) continue
-
         const eff = resolveRuleEffective(cfgRef.current, g.layer)
         if (eff.allowAttrUpdate !== true) continue
         if (fixedKey && layerKey(g.layer) !== fixedKey) continue
-
         pickedRaw = g
         break
       }
@@ -593,7 +514,6 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
           try { refreshEditableLayers(v) } catch {}
           return
         }
-
         if (t === 'none') selection.clearSelection()
         try { refreshEditableLayers(v) } catch {}
         return
@@ -602,43 +522,31 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       const mode: any = t === 'remove' ? 'remove' : t === 'add' ? 'add' : 'replace'
       const oid = getOid(pickedRaw.layer, pickedRaw)
 
-
       if (mode === 'replace') {
         try {
           let g = pickedRaw
-          if (oid != null) {
-            const full = await fetchFullGraphic(pickedRaw.layer, oid)
-            if (full) g = full
-          }
+          if (oid != null) { const full = await fetchFullGraphic(pickedRaw.layer, oid); if (full) g = full }
           await selection.selectGraphic(g, 'replace')
         } catch (e) {
           console.warn('[UE] click full fetch failed', e)
           await selection.selectGraphic(pickedRaw, 'replace')
-        } finally {
-          try { refreshEditableLayers(v) } catch {}
-        }
+        } finally { try { refreshEditableLayers(v) } catch {} }
         return
       }
 
       try {
         let g = pickedRaw
-        if (oid != null) {
-          const full = await fetchFullGraphic(pickedRaw.layer, oid)
-          if (full) g = full
-        }
+        if (oid != null) { const full = await fetchFullGraphic(pickedRaw.layer, oid); if (full) g = full }
         await selection.selectGraphic(g, mode)
       } catch (e) {
         console.warn('[UE] click full fetch failed', e)
         await selection.selectGraphic(pickedRaw, mode)
-      } finally {
-        try { refreshEditableLayers(v) } catch {}
-      }
+      } finally { try { refreshEditableLayers(v) } catch {} }
     })
 
     const hDrag = v.on('drag', async (e: any) => {
       if (geometry.sketchModeRef.current !== 'idle') return
       if (mergeMode) return
-
       const t = toolRef.current
       if (t !== 'add' && t !== 'remove') return
 
@@ -654,24 +562,12 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       if (e.action === 'update') {
         if (!dragStartRef.current) return
         e.stopPropagation()
-
         const p1 = v.toMap(dragStartRef.current)
         const p2 = v.toMap({ x: e.x, y: e.y })
         if (!p1 || !p2) return
-
-        const ext = new Extent({
-          xmin: Math.min(p1.x, p2.x),
-          ymin: Math.min(p1.y, p2.y),
-          xmax: Math.max(p1.x, p2.x),
-          ymax: Math.max(p1.y, p2.y),
-          spatialReference: v.spatialReference
-        })
-
+        const ext = new Extent({ xmin: Math.min(p1.x, p2.x), ymin: Math.min(p1.y, p2.y), xmax: Math.max(p1.x, p2.x), ymax: Math.max(p1.y, p2.y), spatialReference: v.spatialReference })
         if (!boxGraphicRef.current) {
-          const gg = new Graphic({
-            geometry: ext,
-            symbol: boxSymbol()
-          } as any)
+          const gg = new Graphic({ geometry: ext, symbol: boxSymbol() } as any)
           boxGraphicRef.current = gg as any
           boxLayerRef.current?.add(gg as any)
         } else {
@@ -683,18 +579,13 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
       if (e.action === 'end') {
         e.stopPropagation()
-
         const start = dragStartRef.current
         dragStartRef.current = null
-
         const moved = start ? (Math.abs(e.x - start.x) + Math.abs(e.y - start.y)) : 0
         const ext = boxGraphicRef.current?.geometry as any
-
         clearBoxGraphic()
         isBoxDraggingRef.current = false
-
         if (!ext || moved < 6) return
-
         await applyBoxSelect(ext)
       }
     })
@@ -708,27 +599,17 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       try { hDrag.remove() } catch {}
       try { hPopup?.remove?.() } catch {}
       try { hLayers?.remove?.() } catch {}
-      while (visHandles.length) {
-        try { visHandles.pop().remove() } catch {}
-      }
-
-      try {
-        if (boxLayerRef.current) v.map.remove(boxLayerRef.current)
-      } catch {}
+      while (visHandles.length) { try { visHandles.pop().remove() } catch {} }
+      try { if (boxLayerRef.current) v.map.remove(boxLayerRef.current) } catch {}
       try { boxLayerRef.current?.destroy?.() } catch {}
       boxLayerRef.current = null
       boxGraphicRef.current = null
-
-      try {
-        if (mergePreviewLayerRef.current) v.map.remove(mergePreviewLayerRef.current)
-      } catch {}
+      try { if (mergePreviewLayerRef.current) v.map.remove(mergePreviewLayerRef.current) } catch {}
       try { mergePreviewLayerRef.current?.destroy?.() } catch {}
       mergePreviewLayerRef.current = null
       mergePreviewGraphicRef.current = null
-
       dragStartRef.current = null
       isBoxDraggingRef.current = false
-
       setMapCursor(v, 'default')
       viewRef.current = null
       setView(null)
@@ -739,17 +620,11 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     const state = String((props as any)?.state ?? '')
     const isActive = state === '' || state === 'OPENED' || state === 'ACTIVE'
     const v = viewRef.current as any
-
     if (isActive) {
-      if (v && !popupStateRef.current) {
-        popupStateRef.current = captureAndDisablePopups(v)
-      } else if (v && popupStateRef.current) {
-        disablePopupsForNewLayers(v, popupStateRef)
-        try { v.popup?.close?.() } catch {}
-      }
+      if (v && !popupStateRef.current) { popupStateRef.current = captureAndDisablePopups(v) }
+      else if (v && popupStateRef.current) { disablePopupsForNewLayers(v, popupStateRef); try { v.popup?.close?.() } catch {} }
       return
     }
-
     try { geometry.cancel() } catch {}
     try { selection.clearSelection() } catch {}
     clearMergePreview()
@@ -785,7 +660,6 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       direction === 'undo' ? (entry.currentAfter || []) : (entry.currentBefore || []),
       direction === 'undo' ? (entry.before || []) : (entry.after || [])
     )
-
     if (direction === 'undo') entry.currentBefore = nextGraphics
     else entry.currentAfter = nextGraphics
   }, [])
@@ -808,9 +682,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       await applyHistoryEntry(entry, 'undo')
       setUndoStack((prev) => prev.slice(0, -1))
       setRedoStack((prev) => [...prev, entry].slice(-MAX_HISTORY))
-    } catch (e) {
-      console.error('[UE] undo error', e)
-    }
+    } catch (e) { console.error('[UE] undo error', e) }
   }, [undoStack, applyHistoryEntry, resetUiState])
 
   const onRedo = React.useCallback(async () => {
@@ -821,128 +693,63 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       await applyHistoryEntry(entry, 'redo')
       setRedoStack((prev) => prev.slice(0, -1))
       setUndoStack((prev) => [...prev, entry].slice(-MAX_HISTORY))
-    } catch (e) {
-      console.error('[UE] redo error', e)
-    }
+    } catch (e) { console.error('[UE] redo error', e) }
   }, [redoStack, applyHistoryEntry, resetUiState])
 
   const onToggleAdd = React.useCallback(() => {
     if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
-    setGeomChecked(false)
-    setMergeMode(false)
-    setTool(prev => {
-      const next = prev === 'add' ? 'none' : 'add'
-      setMapCursor(viewRef.current, next === 'none' ? 'default' : 'crosshair')
-      return next
-    })
+    setGeomChecked(false); setMergeMode(false)
+    setTool(prev => { const next = prev === 'add' ? 'none' : 'add'; setMapCursor(viewRef.current, next === 'none' ? 'default' : 'crosshair'); return next })
   }, [geometry])
 
   const onToggleRemove = React.useCallback(() => {
     if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
-    setGeomChecked(false)
-    setMergeMode(false)
-    setTool(prev => {
-      const next = prev === 'remove' ? 'none' : 'remove'
-      setMapCursor(viewRef.current, next === 'none' ? 'default' : 'crosshair')
-      return next
-    })
+    setGeomChecked(false); setMergeMode(false)
+    setTool(prev => { const next = prev === 'remove' ? 'none' : 'remove'; setMapCursor(viewRef.current, next === 'none' ? 'default' : 'crosshair'); return next })
   }, [geometry])
 
   const startReshapeSession = React.useCallback((itemOrLayer: any) => {
     if (!itemOrLayer?.layer) return
-
-    setGeomChecked(false)
-    setMergeMode(false)
-    clearMergePreview()
-    setTool('reshape')
-    setMapCursor(viewRef.current, 'default')
-
+    setGeomChecked(false); setMergeMode(false); clearMergePreview(); setTool('reshape'); setMapCursor(viewRef.current, 'default')
     geometry.startReshapeByLine(itemOrLayer as any, async (result: any) => {
       const beforeGs = result?.before || []
       const afterGs = result?.after || []
-      if (beforeGs.length && afterGs.length) {
-        pushHistory(makeHistoryEntry(itemOrLayer.layer, beforeGs, afterGs, 'reshape'))
-      }
-      selection.clearSelection()
-      clearMergePreview()
-      setMergeMode(false)
-      setTool('none')
-      setGeomChecked(false)
-      setMapCursor(viewRef.current, 'default')
+      if (beforeGs.length && afterGs.length) pushHistory(makeHistoryEntry(itemOrLayer.layer, beforeGs, afterGs, 'reshape'))
+      selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
     })
   }, [geometry, selection])
 
   const onToggleReshape = React.useCallback(() => {
-    setGeomChecked(false)
-    setMergeMode(false)
-    clearMergePreview()
-
-    if (tool === 'reshape') {
-      geometry.cancel()
-      selection.clearSelection()
-      setTool('none')
-      setMapCursor(viewRef.current, 'default')
-      return
-    }
-
+    setGeomChecked(false); setMergeMode(false); clearMergePreview()
+    if (tool === 'reshape') { geometry.cancel(); selection.clearSelection(); setTool('none'); setMapCursor(viewRef.current, 'default'); return }
     const reshapeLayer = getTopSplittableLayer(viewRef.current)
     if (!reshapeLayer) return
-
-    const reshapeTarget =
-      sel.length === 1 && sameLayerSelected && layerKey(sel[0].layer) === layerKey(reshapeLayer)
-        ? sel[0]
-        : { layer: reshapeLayer }
-
+    const reshapeTarget = sel.length === 1 && sameLayerSelected && layerKey(sel[0].layer) === layerKey(reshapeLayer) ? sel[0] : { layer: reshapeLayer }
     startReshapeSession(reshapeTarget)
   }, [tool, geometry, selection, sel, sameLayerSelected, startReshapeSession])
 
   const onToggleSplit = React.useCallback(() => {
-    setGeomChecked(false)
-    setMergeMode(false)
-    clearMergePreview()
-
-    if (tool === 'split') {
-      geometry.cancel()
-      setTool('none')
-      setMapCursor(viewRef.current, 'default')
-      return
-    }
-
+    setGeomChecked(false); setMergeMode(false); clearMergePreview()
+    if (tool === 'split') { geometry.cancel(); setTool('none'); setMapCursor(viewRef.current, 'default'); return }
     const splitLayer = getTopSplittableLayer(viewRef.current)
     if (!splitLayer) return
-
-    setTool('split')
-    setMapCursor(viewRef.current, 'default')
-
-    const splitTarget =
-      sel.length === 1 && sameLayerSelected && layerKey(sel[0].layer) === layerKey(splitLayer)
-        ? sel[0]
-        : { layer: splitLayer }
-
+    setTool('split'); setMapCursor(viewRef.current, 'default')
+    const splitTarget = sel.length === 1 && sameLayerSelected && layerKey(sel[0].layer) === layerKey(splitLayer) ? sel[0] : { layer: splitLayer }
     geometry.startSplit(splitTarget as any, async (result: any) => {
       const beforeGs = result?.before || []
       const afterGs = result?.after || []
-      if (beforeGs.length && afterGs.length) {
-        pushHistory(makeHistoryEntry(splitLayer, beforeGs, afterGs, 'split'))
-      }
-      selection.clearSelection()
-      setTool('none')
+      if (beforeGs.length && afterGs.length) pushHistory(makeHistoryEntry(splitLayer, beforeGs, afterGs, 'split'))
+      selection.clearSelection(); setTool('none')
     })
   }, [tool, geometry, selection, sel, sameLayerSelected])
 
   const onStartMerge = React.useCallback(() => {
     if (!canMerge) return
     if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
-    setGeomChecked(false)
-    setTool('none')
-    setMapCursor(viewRef.current, 'default')
-    setMergeMode(true)
+    setGeomChecked(false); setTool('none'); setMapCursor(viewRef.current, 'default'); setMergeMode(true)
   }, [canMerge, geometry])
 
-  const onCancelMerge = React.useCallback(() => {
-    clearMergePreview()
-    setMergeMode(false)
-  }, [])
+  const onCancelMerge = React.useCallback(() => { clearMergePreview(); setMergeMode(false) }, [])
 
   const onPreviewMergeItem = React.useCallback(async (oid: number | null) => {
     await previewMergeItem(oid)
@@ -950,236 +757,117 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   const onConfirmMerge = React.useCallback(async (masterOid: number) => {
     if (!canMerge || !sameLayerSelected || !selectedLayer) return
-
     const layer = selectedLayer as any
     const master = sel.find((s) => s.oid === masterOid)
     if (!master) return
-
-    const geoms = sel
-      .map((s) => s.graphic?.geometry)
-      .filter(Boolean)
-
+    const geoms = sel.map((s) => s.graphic?.geometry).filter(Boolean)
     if (geoms.length < 2) return
-
     let mergedGeometry: any = null
-    try {
-      mergedGeometry = geometryEngine.union(geoms as any)
-    } catch (e) {
-      console.error('[UE] merge union error', e)
-      return
-    }
-
+    try { mergedGeometry = geometryEngine.union(geoms as any) } catch (e) { console.error('[UE] merge union error', e); return }
     if (!mergedGeometry) return
-
     try {
       const res = await layer.applyEdits({
         deleteFeatures: sel.map((s) => s.graphic),
-        addFeatures: [{
-          geometry: mergedGeometry,
-          attributes: { ...(master.graphic?.attributes || {}) }
-        }]
+        addFeatures: [{ geometry: mergedGeometry, attributes: { ...(master.graphic?.attributes || {}) } }]
       } as any)
-
       const newOid = res?.addFeatureResults?.[0]?.objectId
       clearMergePreview()
-
-      if (newOid == null) {
-        setMergeMode(false)
-        selection.clearSelection()
-        return
-      }
-
+      if (newOid == null) { setMergeMode(false); selection.clearSelection(); return }
       const q = layer.createQuery()
-      q.objectIds = [newOid]
-      q.outFields = ['*']
-      q.returnGeometry = true
+      q.objectIds = [newOid]; q.outFields = ['*']; q.returnGeometry = true
       const fs = await layer.queryFeatures(q)
       const mergedGraphic = fs?.features?.[0]
-
       selection.clearSelection()
-      if (mergedGraphic) {
-        await selection.selectGraphic(mergedGraphic, 'replace' as any)
-      }
-
+      if (mergedGraphic) await selection.selectGraphic(mergedGraphic, 'replace' as any)
       setMergeMode(false)
-    } catch (e) {
-      console.error('[UE] merge applyEdits error', e)
-    }
+    } catch (e) { console.error('[UE] merge applyEdits error', e) }
   }, [canMerge, sameLayerSelected, selectedLayer, sel, selection])
 
   const onGeomToggle = React.useCallback(() => {
     if (!canGeom || sel.length !== 1) return
-
-    if (geomChecked) {
-      if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
-      setGeomChecked(false)
-      return
-    }
-
-    setTool('none')
-    setMergeMode(false)
-    clearMergePreview()
-    setMapCursor(viewRef.current, 'default')
-    setGeomChecked(true)
-
+    if (geomChecked) { if (geometry.sketchModeRef.current === 'updating') geometry.cancel(); setGeomChecked(false); return }
+    setTool('none'); setMergeMode(false); clearMergePreview(); setMapCursor(viewRef.current, 'default'); setGeomChecked(true)
     geometry.startGeometryEdit(sel[0] as any)
   }, [canGeom, sel, geomChecked, geometry])
 
-const onStartCreate = React.useCallback((layer: FeatureLayer, template: any) => {
-  setMergeMode(false)
-  setGeomChecked(false)
-  clearMergePreview()
-  const rule = resolveRuleEffective(cfgRef.current, layer)
-  const staticAttrs = applyDefaultValues(rule)
-  geometry.startCreate(layer, template, staticAttrs, async (g) => {
-    const arcadeAttrs = await applyArcadeDefaults(rule, layer, g)
-    if (Object.keys(arcadeAttrs).length > 0) {
-      try {
-        await layer.applyEdits({
-          updateFeatures: [{
-            geometry: (g as any).geometry,
-            attributes: { ...(g as any).attributes, ...arcadeAttrs }
-          } as any]
-        } as any)
-        // ЭТО ДОБАВЛЕНО: обновляем атрибуты в g чтобы форма видела arcade defaults
-        ;(g as any).attributes = { ...(g as any).attributes, ...arcadeAttrs }
-      } catch {}
-    }
-    await selection.selectGraphic(g, 'replace' as any)
-  })
-}, [geometry, selection])
-
+  const onStartCreate = React.useCallback((layer: FeatureLayer, template: any) => {
+    setMergeMode(false); setGeomChecked(false); clearMergePreview()
+    const rule = resolveRuleEffective(cfgRef.current, layer)
+    const staticAttrs = applyDefaultValues(rule)
+    geometry.startCreate(layer, template, staticAttrs, async (g) => {
+      const arcadeAttrs = await applyArcadeDefaults(rule, layer, g)
+      if (Object.keys(arcadeAttrs).length > 0) {
+        try {
+          await layer.applyEdits({ updateFeatures: [{ geometry: (g as any).geometry, attributes: { ...(g as any).attributes, ...arcadeAttrs } } as any] } as any)
+          ;(g as any).attributes = { ...(g as any).attributes, ...arcadeAttrs }
+        } catch {}
+      }
+      await selection.selectGraphic(g, 'replace' as any)
+    })
+  }, [geometry, selection])
 
   const onSaveNew = React.useCallback(async (draftAttrs: Record<string, any>) => {
     await geometry.confirmCreate(draftAttrs)
-    selection.clearSelection()
-    clearMergePreview()
-    setMergeMode(false)
-    setTool('none')
-    setGeomChecked(false)
-    setMapCursor(viewRef.current, 'default')
+    selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [geometry, selection])
 
   const onCancelNew = React.useCallback(async () => {
     await geometry.cancelCreate()
-    selection.clearSelection()
-    clearMergePreview()
-    setMergeMode(false)
-    setTool('none')
-    setGeomChecked(false)
-    setMapCursor(viewRef.current, 'default')
+    selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [geometry, selection])
 
   const onSaveExisting = React.useCallback(async (draftAttrs: Record<string, any>) => {
     const item = sel[0]
     if (!item) return
-
     const layer = item.layer as any
     const oidField = layer.objectIdField || 'OBJECTID'
     const beforeGraphic = item.graphic?.clone ? item.graphic.clone() : item.graphic
     let afterGraphic: any = null
     const isGeomEdit = geomChecked || geometry.sketchModeRef.current === 'updating'
-
     if (isGeomEdit) {
       afterGraphic = await geometry.commitUpdate(draftAttrs)
     } else {
       try {
-        await layer.applyEdits({
-          updateFeatures: [{
-            attributes: {
-              ...(item.graphic?.attributes || {}),
-              ...draftAttrs,
-              [oidField]: item.oid
-            }
-          }]
-        } as any)
+        await layer.applyEdits({ updateFeatures: [{ attributes: { ...(item.graphic?.attributes || {}), ...draftAttrs, [oidField]: item.oid } }] } as any)
         afterGraphic = await fetchFullGraphic(layer, item.oid)
-      } catch (e) {
-        console.error('[UE] attr save error', e)
-        return
-      }
+      } catch (e) { console.error('[UE] attr save error', e); return }
     }
-
-    if (beforeGraphic && afterGraphic) {
-      pushHistory(makeHistoryEntry(layer, [beforeGraphic], [afterGraphic], isGeomEdit ? 'geometry-update' : 'attr-update'))
-    }
-
-    selection.clearSelection()
-    clearMergePreview()
-    setMergeMode(false)
-    setTool('none')
-    setGeomChecked(false)
-    setMapCursor(viewRef.current, 'default')
+    if (beforeGraphic && afterGraphic) pushHistory(makeHistoryEntry(layer, [beforeGraphic], [afterGraphic], isGeomEdit ? 'geometry-update' : 'attr-update'))
+    selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [sel, geomChecked, geometry, selection, pushHistory])
 
   const onCancelEdit = React.useCallback(() => {
-    geometry.cancel()
-    selection.clearSelection()
-    clearMergePreview()
-    setMergeMode(false)
-    setTool('none')
-    setGeomChecked(false)
-    setMapCursor(viewRef.current, 'default')
+    geometry.cancel(); selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [geometry, selection])
 
   const onCancelSketch = React.useCallback(() => {
     const isReshape = tool === 'reshape' || geometry.sketchModeRef.current === 'reshapeLine'
     geometry.cancel()
     if (isReshape) selection.clearSelection()
-    clearMergePreview()
-    setMergeMode(false)
-    setTool('none')
-    setGeomChecked(false)
-    setMapCursor(viewRef.current, 'default')
+    clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [geometry, selection, tool])
 
   const clearSelection = React.useCallback(() => {
-    geometry.cancel()
-    selection.clearSelection()
-    clearMergePreview()
-    setMergeMode(false)
-    setTool('none')
-    setGeomChecked(false)
-    setMapCursor(viewRef.current, 'default')
+    geometry.cancel(); selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [geometry, selection])
 
   const onConfirmDelete = React.useCallback(async (scope: 'single' | 'multi') => {
     const items = sel
     if (!items.length) return
-
     const layer = items[0].layer as any
     const rule = resolveRuleEffective(cfgRef.current, layer)
     if (rule.allowDelete === false) return
-
     const beforeGraphics = (scope === 'single' ? [items[0].graphic] : items.map(it => it.graphic)).filter(Boolean)
-
     try {
-      await layer.applyEdits({
-        deleteFeatures: beforeGraphics
-      } as any)
-      if (beforeGraphics.length) {
-        pushHistory(makeHistoryEntry(layer, beforeGraphics, [], 'delete'))
-      }
-    } catch (e) {
-      console.error('[UE] delete applyEdits error', e)
-    }
-
-    geometry.cancel()
-    selection.clearSelection()
-    clearMergePreview()
-    setMergeMode(false)
-    setTool('none')
-    setGeomChecked(false)
-    setMapCursor(viewRef.current, 'default')
+      await layer.applyEdits({ deleteFeatures: beforeGraphics } as any)
+      if (beforeGraphics.length) pushHistory(makeHistoryEntry(layer, beforeGraphics, [], 'delete'))
+    } catch (e) { console.error('[UE] delete applyEdits error', e) }
+    geometry.cancel(); selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [sel, selection, geometry, pushHistory])
 
   const getFieldPolicy = React.useCallback((layer: FeatureLayer | any): FieldPolicy => {
     if (!layer) {
-      return {
-        hidden: new Set<string>(),
-        readonly: new Set<string>(),
-        labels: new Map<string, string>()
-      }
+      return { hidden: new Set<string>(), readonly: new Set<string>(), labels: new Map<string, string>(), order: [] }
     }
 
     const rule = resolveRuleEffective(cfgRef.current, layer) as any
@@ -1190,10 +878,8 @@ const onStartCreate = React.useCallback((layer: FeatureLayer, template: any) => 
     const hidden = new Set<string>()
     const readonly = new Set<string>()
     const labels = new Map<string, string>()
+    const order: string[] = []
 
-    // Вариант A:
-    // если fields НЕ заданы в конфиге виджета — не вмешиваемся в видимость/редактируемость,
-    // доверяем порталу/смарт-формам, только allowAttrUpdate=false делает всё readonly.
     if (!cfgFields.length) {
       if (rule?.allowAttrUpdate === false) {
         for (const lf of layerFields) {
@@ -1201,29 +887,26 @@ const onStartCreate = React.useCallback((layer: FeatureLayer, template: any) => 
           if (name) readonly.add(name)
         }
       }
-      return { hidden, readonly, labels }
+      return { hidden, readonly, labels, order }
     }
 
-    // fields заданы — применяем нашу политику поверх портала
     const cfgNames = new Set<string>()
     for (const f of cfgFields) {
       const name = String((f as any)?.name || '')
       if (!name || !layerFieldNames.has(name)) continue
+      order.push(name)
       cfgNames.add(name)
-
       if ((f as any)?.label) labels.set(name, String((f as any).label))
       if ((f as any)?.visible === false) hidden.add(name)
       if ((f as any)?.editable === false) readonly.add(name)
     }
 
-    // всё, чего нет в cfgFields, прячем
     for (const lf of layerFields) {
       const name = String(lf?.name || '')
       if (!name) continue
       if (!cfgNames.has(name)) hidden.add(name)
     }
 
-    // глобальное allowAttrUpdate=false — все поля readonly
     if (rule?.allowAttrUpdate === false) {
       for (const lf of layerFields) {
         const name = String(lf?.name || '')
@@ -1231,55 +914,17 @@ const onStartCreate = React.useCallback((layer: FeatureLayer, template: any) => 
       }
     }
 
-    return { hidden, readonly, labels }
+    return { hidden, readonly, labels, order }
   }, [])
 
   return {
-    mapWidgetId,
-    onActiveViewChange,
-    cfg,
-    view,
-
-    selectedItems: sel,
-    tool,
-    mergeMode,
-    geomChecked,
-    sketchMode: geometry.sketchMode,
-
-    editableLayers,
-    attrEditableLayers,
-    showSplitButton,
-
-    canSplit,
-    canReshape,
-    canMerge,
-    canGeom,
-    canUndo,
-    canRedo,
-
-    onToggleAdd,
-    onToggleRemove,
-    onToggleSplit,
-    onToggleReshape,
-    onUndo,
-    onRedo,
-    onGeomToggle,
-
-    onStartMerge,
-    onCancelMerge,
-    onConfirmMerge,
-    onPreviewMergeItem,
-
-    onStartCreate,
-    onSaveNew,
-    onCancelNew,
-    onSaveExisting,
-    onCancelEdit,
-    onCancelSketch,
-
-    onConfirmDelete,
-    clearSelection,
-
-    getFieldPolicy
+    mapWidgetId, onActiveViewChange, cfg, view,
+    selectedItems: sel, tool, mergeMode, geomChecked, sketchMode: geometry.sketchMode,
+    editableLayers, attrEditableLayers, showSplitButton,
+    canSplit, canReshape, canMerge, canGeom, canUndo, canRedo,
+    onToggleAdd, onToggleRemove, onToggleSplit, onToggleReshape, onUndo, onRedo, onGeomToggle,
+    onStartMerge, onCancelMerge, onConfirmMerge, onPreviewMergeItem,
+    onStartCreate, onSaveNew, onCancelNew, onSaveExisting, onCancelEdit, onCancelSketch,
+    onConfirmDelete, clearSelection, getFieldPolicy
   }
 }
