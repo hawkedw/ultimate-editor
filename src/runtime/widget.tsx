@@ -51,13 +51,15 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     })
   }
 
-console.log('[UE][state]', {
-  sketchMode: ue.sketchMode,
-  selLen: sel.length,
-  oid: sel[0]?.oid,
-  mergeMode: ue.mergeMode
-})
+  console.log('[UE][state]', {
+    sketchMode: ue.sketchMode,
+    selLen: sel.length,
+    oid: sel[0]?.oid,
+    mergeMode: ue.mergeMode
+  })
 
+  const isIdle = ue.sketchMode === 'idle'
+  const isCreating = ue.sketchMode === 'creating'
 
   return (
     <div className='ue-widget jimu-widget' css={rootCss}>
@@ -178,12 +180,13 @@ console.log('[UE][state]', {
       </div>
 
       <div className='ue-panel'>
-        {ue.sketchMode === 'idle' && sel.length === 0 && (
-          <IdlePanel key={idleKey} ue={ue} />
-        )}
-
-        {ue.sketchMode === 'creating' && sel.length === 0 && (
-          <div className='ue-hint'>Рисуйте на карте. Двойной клик — завершить.</div>
+        {(isIdle || isCreating) && sel.length === 0 && (
+          <IdlePanel
+            key={idleKey}
+            templateLayers={ue.editableLayers}
+            showAttrHint={isIdle && ue.attrEditableLayers.length > 0}
+            onSelectTemplate={ue.onStartCreate}
+          />
         )}
 
         {ue.sketchMode === 'reshaping' && sel.length === 1 && (
@@ -197,7 +200,7 @@ console.log('[UE][state]', {
           />
         )}
 
-        {!ue.mergeMode && sel.length === 1 && (ue.sketchMode === 'idle' || ue.sketchMode === 'updating') && (
+        {!ue.mergeMode && sel.length === 1 && (isIdle || ue.sketchMode === 'updating') && (
           <FeatureFormPanel
             key={singleKey}
             item={sel[0]}
@@ -208,7 +211,7 @@ console.log('[UE][state]', {
           />
         )}
 
-        {!ue.mergeMode && sel.length >= 2 && ue.sketchMode === 'idle' && (
+        {!ue.mergeMode && sel.length >= 2 && isIdle && (
           <BatchEditPanel
             key={multiKey}
             items={sel}
