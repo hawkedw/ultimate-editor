@@ -1,3 +1,4 @@
+// src/widgets/ultimate-editor/src/runtime/editor/useUltimateEditor.ts
 import { React, type AllWidgetProps } from 'jimu-core'
 import type { JimuMapView } from 'jimu-arcgis'
 import type { IMConfig, FieldSetting } from '../../config'
@@ -362,8 +363,11 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
   }, [sel.length, canGeom, geomChecked, geometry])
 
+  // NOTE: 'reshaping' is exclusive to the create-new-object flow and is unrelated
+  // to geomChecked. Including it here caused a feedback loop with the effect above
+  // when canGeom=false: A sets geomChecked=true, B resets to false, repeat → form flicker.
   React.useEffect(() => {
-    const activeGeomEdit = geometry.sketchMode === 'updating' || geometry.sketchMode === 'reshaping'
+    const activeGeomEdit = geometry.sketchMode === 'updating'
     if (activeGeomEdit && !geomChecked) setGeomChecked(true)
     if (!activeGeomEdit && geomChecked && geometry.sketchMode === 'idle' && sel.length !== 1) setGeomChecked(false)
   }, [geometry.sketchMode, geomChecked, sel.length])
