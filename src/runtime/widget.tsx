@@ -195,8 +195,8 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
             item={sel[0]}
             ue={ue}
             isNew
-            onSave={ue.onSaveNew}
-            onCancel={ue.onCancelNew}
+            onSaveNew={ue.onSaveNew}
+            onCancelNew={ue.onCancelNew}
           />
         )}
 
@@ -205,9 +205,9 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
             key={singleKey}
             item={sel[0]}
             ue={ue}
-            onSave={ue.onSaveExisting}
+            onSaveExisting={ue.onSaveExisting}
             onCancel={ue.onCancelEdit}
-            onDelete={deleteAllowed ? () => setDeleteScope('single') : undefined}
+            onRequestDelete={deleteAllowed ? () => setDeleteScope('single') : undefined}
           />
         )}
 
@@ -216,7 +216,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
             key={multiKey}
             items={sel}
             ue={ue}
-            onDelete={deleteAllowed ? () => setDeleteScope('multi') : undefined}
+            onRequestDelete={deleteAllowed ? () => setDeleteScope('multi') : undefined}
           />
         )}
 
