@@ -145,7 +145,7 @@ console.log('[UE][state]', {
           </>
         )}
 
-        {!ue.mergeMode && sel.length === 1 && ue.canGeom && (
+        {!ue.mergeMode && sel.length === 1 && ue.canGeom && ue.sketchMode !== 'reshaping' && (
           <label
             className={
               'ue-tb-btn ue-tb-checkbtn' +
@@ -178,123 +178,58 @@ console.log('[UE][state]', {
       </div>
 
       <div className='ue-panel'>
-        {ue.sketchMode === 'creating' && (
-          <div className='ue-form-host'>
-            <div className='ue-form-title ue-form-title--sm'>Оцифровка объекта</div>
-            <p className='ue-hint'>Кликайте для добавления вершин. Двойной клик — завершить.</p>
-            <button
-              type='button'
-              className='ue-btn ue-btn--secondary'
-              onClick={ue.onCancelSketch}
-            >
-              Отмена
-            </button>
-          </div>
+        {ue.sketchMode === 'idle' && sel.length === 0 && (
+          <IdlePanel key={idleKey} ue={ue} />
         )}
 
-        {ue.sketchMode === 'splitting' && (
-          <div className='ue-form-host'>
-            <div className='ue-form-title'>Разрезание объекта</div>
-            <p className='ue-hint'>Нарисуйте линию разреза. Двойной клик — завершить.</p>
-            <button
-              type='button'
-              className='ue-btn ue-btn--secondary'
-              onClick={ue.onCancelSketch}
-            >
-              Отмена
-            </button>
-          </div>
-        )}
-
-        {ue.sketchMode === 'reshapeLine' && (
-          <div className='ue-form-host'>
-            <div className='ue-form-title'>Изменение формы</div>
-            <p className='ue-hint'>Нарисуйте линию от контура к контуру. Линия внутри полигона вырезает часть, линия снаружи добавляет часть.</p>
-            <button
-              type='button'
-              className='ue-btn ue-btn--secondary'
-              onClick={ue.onCancelSketch}
-            >
-              Отмена
-            </button>
-          </div>
-        )}
-
-        {ue.sketchMode === 'reshaping' && sel.length === 0 && (
-          <div className='ue-form-host'>
-            <div className='ue-form-title'>Подготовка…</div>
-          </div>
+        {ue.sketchMode === 'creating' && sel.length === 0 && (
+          <div className='ue-hint'>Рисуйте на карте. Двойной клик — завершить.</div>
         )}
 
         {ue.sketchMode === 'reshaping' && sel.length === 1 && (
           <FeatureFormPanel
             key={singleKey}
-            ue={ue}
             item={sel[0]}
-            cfg={ue.cfg}
-            onSaveNew={ue.onSaveNew}
-            onCancelNew={ue.onCancelNew}
-            onDeleted={ue.clearSelection}
+            ue={ue}
             isNew
-          />
-        )}
-
-        {ue.sketchMode === 'idle' && ue.mergeMode && sel.length >= 2 && (
-          <MergePanel
-            items={sel}
-            onCancel={ue.onCancelMerge}
-            onConfirm={ue.onConfirmMerge}
-            onPreview={ue.onPreviewMergeItem}
-          />
-        )}
-
-        {ue.sketchMode === 'idle' && !ue.mergeMode && sel.length === 0 && (
-          <IdlePanel
-            key={idleKey}
-            templateLayers={ue.editableLayers}
-            showAttrHint={ue.attrEditableLayers.length > 0}
-            onSelectTemplate={ue.onStartCreate}
+            onSave={ue.onSaveNew}
+            onCancel={ue.onCancelNew}
           />
         )}
 
         {!ue.mergeMode && sel.length === 1 && (ue.sketchMode === 'idle' || ue.sketchMode === 'updating') && (
           <FeatureFormPanel
             key={singleKey}
-            ue={ue}
             item={sel[0]}
-            cfg={ue.cfg}
-            onDeleted={ue.clearSelection}
+            ue={ue}
+            onSave={ue.onSaveExisting}
             onCancel={ue.onCancelEdit}
-            onSaved={ue.clearSelection}
-            onSaveExisting={ue.onSaveExisting}
-            onRequestDelete={deleteAllowed ? () => setDeleteScope('single') : undefined}
-            deleteConfirm={deleteAllowed && deleteScope === 'single'}
-            onCancelDelete={() => setDeleteScope(null)}
-            onConfirmDelete={() => {
-              if (!deleteAllowed) return
-              ue.onConfirmDelete('single')
-              setDeleteScope(null)
-            }}
+            onDelete={deleteAllowed ? () => setDeleteScope('single') : undefined}
           />
         )}
 
-        {ue.sketchMode === 'idle' && !ue.mergeMode && sel.length >= 2 && (
+        {!ue.mergeMode && sel.length >= 2 && ue.sketchMode === 'idle' && (
           <BatchEditPanel
             key={multiKey}
-            ue={ue}
             items={sel}
-            cfg={ue.cfg}
-            onDeleted={ue.clearSelection}
-            onCancel={ue.onCancelEdit}
-            onRequestDelete={deleteAllowed ? () => setDeleteScope('multi') : undefined}
-            deleteConfirm={deleteAllowed && deleteScope === 'multi'}
-            onCancelDelete={() => setDeleteScope(null)}
-            onConfirmDelete={() => {
-              if (!deleteAllowed) return
-              ue.onConfirmDelete('multi')
-              setDeleteScope(null)
-            }}
+            ue={ue}
+            onDelete={deleteAllowed ? () => setDeleteScope('multi') : undefined}
           />
+        )}
+
+        {ue.mergeMode && (
+          <MergePanel
+            items={sel}
+            ue={ue}
+          />
+        )}
+
+        {deleteScope && (
+          <div className='ue-delete-confirm'>
+            <p>Удалить {deleteScope === 'multi' ? `${sel.length} объекта(-ов)` : 'объект'}?</p>
+            <button type='button' className='ue-tb-btn ue-tb-btn--danger' onClick={() => { ue.onConfirmDelete(deleteScope); setDeleteScope(null) }}>Удалить</button>
+            <button type='button' className='ue-tb-btn' onClick={() => setDeleteScope(null)}>Отмена</button>
+          </div>
         )}
       </div>
     </div>
