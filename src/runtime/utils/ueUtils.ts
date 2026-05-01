@@ -114,14 +114,16 @@ export function resolveRuleEffective(cfg: IMConfig | undefined, layer: any): Lay
 
   const capCreate = canCreateByLayerCapabilities(layer)
   const capUpdate = canUpdateByLayerCapabilities(layer)
+  const capDelete = canDeleteByLayerCapabilities(layer)
 
   const allowCreate = (r?.allowCreate ?? capCreate) && capCreate
   const allowUpdate = (r?.allowUpdate ?? capUpdate) && capUpdate
+  const allowDelete = (r?.allowDelete ?? capDelete) && capDelete
 
   const allowAttrUpdate = (r?.allowAttrUpdate ?? allowUpdate) && allowUpdate
   const allowGeomUpdate = (r?.allowGeomUpdate ?? allowUpdate) && allowUpdate
 
-  return { ...r, id: r?.id ?? '', allowCreate, allowUpdate, allowAttrUpdate, allowGeomUpdate }
+  return { ...r, id: r?.id ?? '', allowCreate, allowUpdate, allowAttrUpdate, allowGeomUpdate, allowDelete }
 }
 
 function toPlainFields(rawFields: any): FieldSetting[] {
