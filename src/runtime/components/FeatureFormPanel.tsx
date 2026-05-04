@@ -22,6 +22,45 @@ interface Props {
   onConfirmDelete?: () => void
 }
 
+const DBG = () => (window as any).__UE_DEBUG === true
+const dlog = (...a: any[]) => { if (DBG()) console.log(...a) }
+const dwarn = (...a: any[]) => { if (DBG()) console.warn(...a) }
+
+function getLayerStableKey (layer: any): string {
+  const url = String(layer?.url || '')
+  const lid = layer?.layerId ?? layer?.sublayerId ?? ''
+  const id = String(layer?.id || '')
+  const title = String(layer?.title || '')
+  return url ? `${url}::${lid || id || title}` : `${id || title || 'layer'}::${lid}`
+}
+
+function getItemOid (item: any, layer: any): any {
+  const oidField = layer?.objectIdField || 'OBJECTID'
+  return item?.oid ?? item?.graphic?.attributes?.[oidField] ?? null
+}
+
+function getElementCount (formTemplate: any): number {
+  return (formTemplate?.elements || []).length
+}
+
+function measureElement (el: HTMLElement | null) {
+  if (!el) return null
+  const rect = el.getBoundingClientRect?.()
+  const style = window.getComputedStyle?.(el)
+  return {
+    offsetHeight: el.offsetHeight,
+    clientHeight: el.clientHeight,
+    scrollHeight: el.scrollHeight,
+    rectHeight: rect?.height,
+    display: style?.display,
+    position: style?.position,
+    flex: style?.flex,
+    height: style?.height,
+    minHeight: style?.minHeight,
+    overflow: style?.overflow
+  }
+}
+
 const FeatureFormPanel = ({
   item,
   ue,
@@ -38,9 +77,12 @@ const FeatureFormPanel = ({
 }: Props) => {
   const hostRef = React.useRef<HTMLDivElement | null>(null)
   const featureFormRef = React.useRef<any>(null)
+  const initSeqRef = React.useRef(0)
 
   const layer = item?.layer as any
   const layerTitle = layer?.title || 'Объект'
+  const oid = getItemOid(item, layer)
+  const layerStableKey = React.useMemo(() => getLayerStableKey(layer), [layer])
 
   const policy = React.useMemo(() => {
     if (!layer) {
@@ -49,6 +91,15 @@ const FeatureFormPanel = ({
     return ue.getFieldPolicy(layer)
   }, [ue, layer])
 
+  const policySignature = React.useMemo(() => {
+    return JSON.stringify({
+      hidden: Array.from(policy.hidden || []).sort(),
+      readonly: Array.from(policy.readonly || []).sort(),
+      labels: Array.from(policy.labels || []).sort(([a], [b]) => String(a).localeCompare(String(b))),
+      order: policy.order || []
+    })
+  }, [policy])
+
   const isPolicyEmpty = React.useMemo(() => {
     return (
       policy.hidden.size === 0 &&
@@ -56,7 +107,7 @@ const FeatureFormPanel = ({
       policy.labels.size === 0 &&
       (!policy.order || policy.order.length === 0)
     )
-  }, [policy])
+  }, [policySignature, policy])
 
   const formTemplate = React.useMemo(() => {
     if (!layer) return null
@@ -93,7 +144,20 @@ const FeatureFormPanel = ({
       })
 
     return elements.length ? { expressionInfos, elements } as any : null
-  }, [layer, policy, isPolicyEmpty])
+  }, [layer, policySignature, isPolicyEmpty, policy])
+
+  const formTemplateSignature = React.useMemo(() => {
+    return formTemplate
+      ? JSON.stringify({
+        fields: (formTemplate.elements || []).map((e: any) => [e.fieldName, e.label, e.editableExpression]),
+        expressions: (formTemplate.expressionInfos || []).map((e: any) => [e.name, e.expression])
+      })
+      : 'portal-default'
+  }, [formTemplate])
+
+  const formInstanceKey = React.useMemo(() => {
+    return `${isNew ? 'new' : 'existing'}::${layerStableKey}::${oid ?? 'no-oid'}::${formTemplateSignature}`
+  }, [isNew, layerStableKey, oid, formTemplateSignature])
 
   const editableFieldNames = React.useMemo(() => {
     const out = new Set<string>()
@@ -113,14 +177,61 @@ const FeatureFormPanel = ({
       out.add(name)
     }
     return out
-  }, [layer, policy, isPolicyEmpty])
+  }, [layer, policySignature, isPolicyEmpty, policy])
+
+  React.useEffect(() => {
+    dlog('[UE][FFP] render snapshot', {
+      formInstanceKey,
+      isNew: !!isNew,
+      oid,
+      layerTitle,
+      hasGraphic: !!item?.graphic,
+      hasLayer: !!layer,
+      hasTemplate: !!formTemplate,
+      fieldCount: getElementCount(formTemplate),
+      host: measureElement(hostRef.current),
+      body: measureElement(hostRef.current?.parentElement as HTMLElement | null),
+      panel: measureElement(hostRef.current?.closest?.('.ue-panel') as HTMLElement | null)
+    })
+  })
 
   React.useEffect(() => {
     const host = hostRef.current
+    const seq = ++initSeqRef.current
+
+    dlog('[UE][FFP] effect start', {
+      seq,
+      formInstanceKey,
+      isNew: !!isNew,
+      oid,
+      layerTitle,
+      hasGraphic: !!item?.graphic,
+      hasLayer: !!layer,
+      hasTemplate: !!formTemplate,
+      fieldCount: getElementCount(formTemplate),
+      host: measureElement(host),
+      body: measureElement(host?.parentElement as HTMLElement | null),
+      panel: measureElement(host?.closest?.('.ue-panel') as HTMLElement | null)
+    })
+
     if (!host || !item?.graphic || !layer) return
     host.innerHTML = ''
 
     let ff: any = null
+    let rafId: number | null = null
+    let t0: any = null
+    let t250: any = null
+
+    const logDelayed = (label: string) => {
+      dlog(`[UE][FFP] ${label}`, {
+        seq,
+        formInstanceKey,
+        host: measureElement(host),
+        body: measureElement(host.parentElement as HTMLElement | null),
+        panel: measureElement(host.closest?.('.ue-panel') as HTMLElement | null),
+        esriForm: measureElement(host.querySelector?.('.esri-feature-form') as HTMLElement | null)
+      })
+    }
 
     const createForm = (withTemplate: boolean) => new FeatureForm({
       container: host,
@@ -132,37 +243,53 @@ const FeatureFormPanel = ({
     try {
       ff = createForm(true)
       featureFormRef.current = ff
-      console.log('[UE][FFP] init ok', {
+      dlog('[UE][FFP] init ok', {
+        seq,
+        formInstanceKey,
         isNew: !!isNew,
         layerTitle,
         hasTemplate: !!formTemplate,
-        fieldCount: (formTemplate?.elements || []).length,
-        hostHeight: host.offsetHeight,
-        hostClientHeight: host.clientHeight
+        fieldCount: getElementCount(formTemplate),
+        host: measureElement(host)
       })
     } catch (e) {
-      console.warn('[UE][FFP] FeatureForm init with template failed, retrying without template', e)
+      dwarn('[UE][FFP] FeatureForm init with template failed, retrying without template', e)
       try {
         host.innerHTML = ''
         ff = createForm(false)
         featureFormRef.current = ff
-        console.log('[UE][FFP] fallback init ok', {
+        dlog('[UE][FFP] fallback init ok', {
+          seq,
+          formInstanceKey,
           isNew: !!isNew,
           layerTitle,
-          hostHeight: host.offsetHeight,
-          hostClientHeight: host.clientHeight
+          host: measureElement(host)
         })
       } catch (fallbackError) {
         console.error('[UE][FFP] FeatureForm init error', fallbackError)
       }
     }
 
+    try { rafId = window.requestAnimationFrame?.(() => logDelayed('after raf')) ?? null } catch {}
+    t0 = window.setTimeout?.(() => logDelayed('after timeout 0'), 0)
+    t250 = window.setTimeout?.(() => logDelayed('after timeout 250'), 250)
+
     return () => {
+      dlog('[UE][FFP] cleanup', {
+        seq,
+        formInstanceKey,
+        host: measureElement(host),
+        body: measureElement(host.parentElement as HTMLElement | null),
+        panel: measureElement(host.closest?.('.ue-panel') as HTMLElement | null)
+      })
+      try { if (rafId != null) window.cancelAnimationFrame?.(rafId) } catch {}
+      try { if (t0 != null) window.clearTimeout?.(t0) } catch {}
+      try { if (t250 != null) window.clearTimeout?.(t250) } catch {}
       try { ff?.destroy() } catch {}
       featureFormRef.current = null
       if (host) host.innerHTML = ''
     }
-  }, [item, layer, formTemplate, isNew, layerTitle])
+  }, [formInstanceKey])
 
   const handleSave = async () => {
     const rawValues = featureFormRef.current?.getValues?.() ?? {}
