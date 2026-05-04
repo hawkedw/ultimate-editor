@@ -136,7 +136,9 @@ const FeatureFormPanel = ({
         isNew: !!isNew,
         layerTitle,
         hasTemplate: !!formTemplate,
-        fieldCount: (formTemplate?.elements || []).length
+        fieldCount: (formTemplate?.elements || []).length,
+        hostHeight: host.offsetHeight,
+        hostClientHeight: host.clientHeight
       })
     } catch (e) {
       console.warn('[UE][FFP] FeatureForm init with template failed, retrying without template', e)
@@ -146,7 +148,9 @@ const FeatureFormPanel = ({
         featureFormRef.current = ff
         console.log('[UE][FFP] fallback init ok', {
           isNew: !!isNew,
-          layerTitle
+          layerTitle,
+          hostHeight: host.offsetHeight,
+          hostClientHeight: host.clientHeight
         })
       } catch (fallbackError) {
         console.error('[UE][FFP] FeatureForm init error', fallbackError)
@@ -198,8 +202,17 @@ const FeatureFormPanel = ({
         </div>
       )}
 
-      <div className='ue-form-body'>
-        <div ref={hostRef} />
+      <div className='ue-form-body' style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div
+          ref={hostRef}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            flex: '1 1 auto',
+            minHeight: 0,
+            height: '100%'
+          }}
+        />
       </div>
     </div>
   )
