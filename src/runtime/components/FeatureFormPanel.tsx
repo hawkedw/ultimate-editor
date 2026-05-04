@@ -1,7 +1,6 @@
 // src/widgets/ultimate-editor/src/runtime/components/FeatureFormPanel.tsx
 import { React } from 'jimu-core'
 import FeatureForm from 'esri/widgets/FeatureForm'
-import type { FieldSetting } from '../../config'
 import type { FieldPolicy } from '../editor/useUltimateEditor'
 
 interface Props {
@@ -21,13 +20,6 @@ interface Props {
   deleteConfirm?: boolean
   onCancelDelete?: () => void
   onConfirmDelete?: () => void
-}
-
-function toPlainFields (raw: any): FieldSetting[] {
-  if (!raw) return []
-  if (typeof raw.asMutable === 'function') return raw.asMutable({ deep: true }) as FieldSetting[]
-  if (Array.isArray(raw)) return raw as FieldSetting[]
-  return []
 }
 
 const FeatureFormPanel = ({
@@ -76,7 +68,6 @@ const FeatureFormPanel = ({
       layerFields.filter((f: any) => f?.name).map((f: any) => [String(f.name), f])
     )
 
-    // если есть явный порядок из настроек — используем его, иначе порядок сервиса
     const orderedFields: any[] = policy.order?.length
       ? policy.order.map(name => byName.get(name)).filter(Boolean)
       : layerFields
@@ -101,14 +92,17 @@ const FeatureFormPanel = ({
         }
       })
 
-    return { expressionInfos, elements } as any
+    return elements.length ? { expressionInfos, elements } as any : null
   }, [layer, policy, isPolicyEmpty])
 
   const editableFieldNames = React.useMemo(() => {
     const out = new Set<string>()
     const fields = ((layer?.fields || []) as any[])
     if (isPolicyEmpty) {
-      for (const f of fields) { const name = String(f?.name || ''); if (name) out.add(name) }
+      for (const f of fields) {
+        const name = String(f?.name || '')
+        if (name) out.add(name)
+      }
       return out
     }
     for (const f of fields) {
@@ -126,18 +120,37 @@ const FeatureFormPanel = ({
     if (!host || !item?.graphic || !layer) return
     host.innerHTML = ''
 
-    let ff: any
+    let ff: any = null
+
+    const createForm = (withTemplate: boolean) => new FeatureForm({
+      container: host,
+      feature: item.graphic,
+      layer,
+      ...(withTemplate && formTemplate ? { formTemplate } as any : {})
+    } as any)
+
     try {
-      ff = new FeatureForm({
-        container: host,
-        feature: item.graphic,
-        layer,
-        ...(formTemplate ? { formTemplate } as any : {})
-      } as any)
-      if (formTemplate) (ff as any).formTemplate = formTemplate
+      ff = createForm(true)
       featureFormRef.current = ff
+      console.log('[UE][FFP] init ok', {
+        isNew: !!isNew,
+        layerTitle,
+        hasTemplate: !!formTemplate,
+        fieldCount: (formTemplate?.elements || []).length
+      })
     } catch (e) {
-      console.error('[UE][FFP] FeatureForm init error', e)
+      console.warn('[UE][FFP] FeatureForm init with template failed, retrying without template', e)
+      try {
+        host.innerHTML = ''
+        ff = createForm(false)
+        featureFormRef.current = ff
+        console.log('[UE][FFP] fallback init ok', {
+          isNew: !!isNew,
+          layerTitle
+        })
+      } catch (fallbackError) {
+        console.error('[UE][FFP] FeatureForm init error', fallbackError)
+      }
     }
 
     return () => {
@@ -145,7 +158,7 @@ const FeatureFormPanel = ({
       featureFormRef.current = null
       if (host) host.innerHTML = ''
     }
-  }, [item, layer, formTemplate])
+  }, [item, layer, formTemplate, isNew, layerTitle])
 
   const handleSave = async () => {
     const rawValues = featureFormRef.current?.getValues?.() ?? {}
