@@ -1,6 +1,7 @@
 // src/widgets/ultimate-editor/src/runtime/widget.tsx
 import { React, type AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent, type JimuMapView } from 'jimu-arcgis'
+import SketchViewModel from 'esri/widgets/Sketch/SketchViewModel'
 import type { IMConfig } from '../config'
 import { rootCss } from './styles'
 import { useUltimateEditor } from './editor/useUltimateEditor'
@@ -10,7 +11,56 @@ import BatchEditPanel from './components/BatchEditPanel'
 import MergePanel from './components/MergePanel'
 import { layerKey, resolveRuleEffective } from './utils/ueUtils'
 
+function ensurePolygonMovePatch () {
+  const proto = (SketchViewModel as any)?.prototype
+  if (!proto || proto.__uePolygonMovePatch === true) return
+
+  const originalUpdate = proto.update
+  if (typeof originalUpdate !== 'function') return
+
+  proto.update = function patchedUltimateEditorUpdate (graphics: any, options?: any) {
+    const list = Array.isArray(graphics) ? graphics : (graphics ? [graphics] : [])
+    const hasPolygon = list.some((g: any) => g?.geometry?.type === 'polygon')
+
+    if (!hasPolygon) {
+      return originalUpdate.call(this, graphics, options)
+    }
+
+    const nextOptions: any = { ...(options || {}) }
+    const requestedTool = String(nextOptions.tool || '')
+
+    // Polygon field geometry must never enter SketchViewModel move mode.
+    // Vertices may be reshaped, but moving the whole polygon is forbidden.
+    if (requestedTool === 'move') {
+      nextOptions.tool = 'reshape'
+    }
+
+    if (!nextOptions.tool || nextOptions.tool === 'reshape') {
+      nextOptions.tool = 'reshape'
+      nextOptions.enabledTools = ['reshape']
+      nextOptions.toggleToolOnClick = false
+      nextOptions.enableRotation = false
+      nextOptions.enableScaling = false
+      nextOptions.preserveAspectRatio = false
+    }
+
+    if ((window as any).__UE_DEBUG === true && requestedTool === 'move') {
+      console.warn('[UE][SketchGuard] polygon move blocked; forcing reshape', {
+        count: list.length,
+        requestedTool,
+        appliedTool: nextOptions.tool
+      })
+    }
+
+    return originalUpdate.call(this, graphics, nextOptions)
+  }
+
+  proto.__uePolygonMovePatch = true
+}
+
 const Widget = (props: AllWidgetProps<IMConfig>) => {
+  ensurePolygonMovePatch()
+
   const ue = useUltimateEditor(props)
   const sel = ue.selectedItems
 
