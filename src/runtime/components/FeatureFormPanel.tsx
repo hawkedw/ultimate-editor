@@ -180,7 +180,8 @@ const FeatureFormPanel = ({
   }, [layer, policySignature, isPolicyEmpty, policy])
 
   React.useEffect(() => {
-    dlog('[UE][FFP] render snapshot', {
+    if (!DBG()) return
+    dlog('[UE][FFP] mounted snapshot', {
       formInstanceKey,
       isNew: !!isNew,
       oid,
@@ -193,7 +194,7 @@ const FeatureFormPanel = ({
       body: measureElement(hostRef.current?.parentElement as HTMLElement | null),
       panel: measureElement(hostRef.current?.closest?.('.ue-panel') as HTMLElement | null)
     })
-  })
+  }, [formInstanceKey])
 
   React.useEffect(() => {
     const host = hostRef.current
