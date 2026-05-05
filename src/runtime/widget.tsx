@@ -16,6 +16,22 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   const ue = useUltimateEditor(props)
   const sel = ue.selectedItems
 
+  const onActiveViewChangeRef = React.useRef(ue.onActiveViewChange)
+  React.useEffect(() => {
+    onActiveViewChangeRef.current = ue.onActiveViewChange
+  }, [ue.onActiveViewChange])
+
+  const handleActiveViewChange = React.useCallback((jmv: JimuMapView) => {
+    if (DBG()) {
+      console.log('[UE][map] active view change', {
+        hasJimuMapView: !!jmv,
+        hasView: !!jmv?.view,
+        mapWidgetId: ue.mapWidgetId
+      })
+    }
+    onActiveViewChangeRef.current(jmv)
+  }, [ue.mapWidgetId])
+
   const layersKey = ue.editableLayers.map((l: any) => l.id || l.title).join('|')
   const attrLayersKey = ue.attrEditableLayers.map((l: any) => l.id || l.title).join('|')
   const idleKey = `${layersKey}__${attrLayersKey}`
@@ -77,8 +93,9 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     <div className='ue-widget jimu-widget' css={rootCss}>
       {ue.mapWidgetId && (
         <JimuMapViewComponent
+          key={ue.mapWidgetId}
           useMapWidgetId={ue.mapWidgetId}
-          onActiveViewChange={(jmv: JimuMapView) => ue.onActiveViewChange(jmv)}
+          onActiveViewChange={handleActiveViewChange}
         />
       )}
 
