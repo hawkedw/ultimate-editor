@@ -1,0 +1,18 @@
+{
+  "name": "ultimate-editor",
+  "type": "widget",
+  "label": "Редактор",
+  "version": "2.0.0",
+  "exbVersion": "1.20.0",
+  "author": "",
+  "description": "Refactored custom FeatureLayer editor for ArcGIS Experience Builder",
+  "icon": "icon.svg",
+  "properties": {},
+  "translatedLocales": [
+    "ru"
+  ],
+  "defaultSize": {
+    "width": 320,
+    "height": 600
+  }
+}
