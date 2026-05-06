@@ -139,22 +139,23 @@ export function useGeometry () {
     return sum / 2
   }
 
-  const getOuterRing = (polygon: any): XY[] | null => {
+  const getOpenRings = (polygon: any): XY[][] => {
     const rings = polygon?.rings || []
-    if (!rings.length) return null
-    let best: XY[] | null = null
-    let bestArea = -1
+    const out: Array<{ ring: XY[], area: number }> = []
+
     for (const ring of rings) {
       const pts = ring.map((p: any) => toXY(p))
       const open = sameXY(pts[0], pts[pts.length - 1]) ? pts.slice(0, -1) : pts.slice()
       if (open.length < 3) continue
       const area = Math.abs(ringArea(open))
-      if (area > bestArea) {
-        bestArea = area
-        best = open
-      }
+      if (area > 0) out.push({ ring: open, area })
     }
-    return best
+
+    return out.sort((a, b) => b.area - a.area).map((x) => x.ring)
+  }
+
+  const getOuterRing = (polygon: any): XY[] | null => {
+    return getOpenRings(polygon)[0] || null
   }
 
   const buildBoundaryPath = (ring: XY[], fromPoint: XY, fromSegIndex: number, toPoint: XY, toSegIndex: number) => {
@@ -298,51 +299,55 @@ export function useGeometry () {
   }
 
   const buildReshapedPolygonGeometry = (polygon: any, line: any) => {
-    const ring = getOuterRing(polygon)
     const rawPath = line?.paths?.[0]
-    if (!ring || !rawPath || rawPath.length < 2) return null
+    if (!rawPath || rawPath.length < 2) return null
 
     const linePts = dedupePath(rawPath.map((p: any) => toXY(p)))
     if (linePts.length < 2) return null
 
-    const hits = getLineBoundaryIntersections(linePts, ring)
-    if (hits.length < 2) return null
+    const addVariants: any[] = []
+    const subtractVariants: any[] = []
 
-    const startHit = hits[0]
-    const endHit = hits[hits.length - 1]
-    const drawPath = sliceLineByHits(linePts, startHit, endHit)
-    if (drawPath.length < 2) return null
+    for (const ring of getOpenRings(polygon)) {
+      const hits = getLineBoundaryIntersections(linePts, ring)
+      if (hits.length < 2) continue
 
-    const arcEndToStart = buildBoundaryPath(ring, endHit.point, endHit.ringSegIndex, startHit.point, startHit.ringSegIndex)
-    const arcStartToEnd = buildBoundaryPath(ring, startHit.point, startHit.ringSegIndex, endHit.point, endHit.ringSegIndex)
+      const startHit = hits[0]
+      const endHit = hits[hits.length - 1]
+      const drawPath = sliceLineByHits(linePts, startHit, endHit)
+      if (drawPath.length < 2) continue
 
-    const patchA = simplifyPolygon(new Polygon({
-      rings: [closeRing([...drawPath, ...arcEndToStart])],
-      spatialReference: polygon.spatialReference
-    } as any))
+      const arcEndToStart = buildBoundaryPath(ring, endHit.point, endHit.ringSegIndex, startHit.point, startHit.ringSegIndex)
+      const arcStartToEnd = buildBoundaryPath(ring, startHit.point, startHit.ringSegIndex, endHit.point, endHit.ringSegIndex)
 
-    const patchB = simplifyPolygon(new Polygon({
-      rings: [closeRing([...arcStartToEnd, ...drawPath.slice().reverse()])],
-      spatialReference: polygon.spatialReference
-    } as any))
+      const patchA = simplifyPolygon(new Polygon({
+        rings: [closeRing([...drawPath, ...arcEndToStart])],
+        spatialReference: polygon.spatialReference
+      } as any))
 
-    const mid = polylineMidPoint(drawPath)
-    let midInside = false
-    if (mid) {
-      try {
-        midInside = !!(geometryEngine as any).contains?.(polygon, new Point({ x: mid.x, y: mid.y, spatialReference: polygon.spatialReference } as any))
-      } catch {}
+      const patchB = simplifyPolygon(new Polygon({
+        rings: [closeRing([...arcStartToEnd, ...drawPath.slice().reverse()])],
+        spatialReference: polygon.spatialReference
+      } as any))
+
+      const mid = polylineMidPoint(drawPath)
+      let midInside = false
+      if (mid) {
+        try {
+          midInside = !!(geometryEngine as any).contains?.(polygon, new Point({ x: mid.x, y: mid.y, spatialReference: polygon.spatialReference } as any))
+        } catch {}
+      }
+
+      if (midInside) {
+        subtractVariants.push((geometryEngine as any).difference?.(polygon, patchA))
+        subtractVariants.push((geometryEngine as any).difference?.(polygon, patchB))
+      } else {
+        addVariants.push((geometryEngine as any).union?.([polygon, patchA]) || (geometryEngine as any).union?.(polygon, patchA))
+        addVariants.push((geometryEngine as any).union?.([polygon, patchB]) || (geometryEngine as any).union?.(polygon, patchB))
+      }
     }
 
-    if (midInside) {
-      const diffA = (geometryEngine as any).difference?.(polygon, patchA)
-      const diffB = (geometryEngine as any).difference?.(polygon, patchB)
-      return pickBestGeometry(polygon, [diffA, diffB], 'subtract')
-    }
-
-    const unionA = (geometryEngine as any).union?.([polygon, patchA]) || (geometryEngine as any).union?.(polygon, patchA)
-    const unionB = (geometryEngine as any).union?.([polygon, patchB]) || (geometryEngine as any).union?.(polygon, patchB)
-    return pickBestGeometry(polygon, [unionA, unionB], 'add')
+    return pickBestGeometry(polygon, subtractVariants, 'subtract') || pickBestGeometry(polygon, addVariants, 'add')
   }
 
   const activePolygonUpdateSymbol = {

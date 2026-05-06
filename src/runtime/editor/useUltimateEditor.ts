@@ -647,22 +647,34 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     try { mergedGeometry = geometryEngine.union(geoms as any) } catch (e) { console.error('[UE] merge union error', e); return }
     if (!mergedGeometry) return
     try {
-      const res = await layer.applyEdits({
-        deleteFeatures: sel.map((s) => s.graphic),
-        addFeatures: [{ geometry: mergedGeometry, attributes: { ...(master.graphic?.attributes || {}) } }]
+      const oidField = layer.objectIdField || 'OBJECTID'
+      const beforeGraphics = [
+        master.graphic?.clone ? master.graphic.clone() : master.graphic,
+        ...sel
+          .filter((s) => s.oid !== masterOid)
+          .map((s) => s.graphic?.clone ? s.graphic.clone() : s.graphic)
+      ].filter(Boolean)
+      const deleteFeatures = sel.filter((s) => s.oid !== masterOid).map((s) => s.graphic).filter(Boolean)
+
+      await layer.applyEdits({
+        updateFeatures: [{
+          geometry: mergedGeometry,
+          attributes: { [oidField]: masterOid }
+        }],
+        ...(deleteFeatures.length ? { deleteFeatures } : {})
       } as any)
-      const newOid = res?.addFeatureResults?.[0]?.objectId
+
       clearMergePreview()
-      if (newOid == null) { setMergeMode(false); selection.clearSelection(); return }
       const q = layer.createQuery()
-      q.objectIds = [newOid]; q.outFields = ['*']; q.returnGeometry = true
+      q.objectIds = [masterOid]; q.outFields = ['*']; q.returnGeometry = true
       const fs = await layer.queryFeatures(q)
       const mergedGraphic = fs?.features?.[0]
+      if (mergedGraphic) pushHistory(makeHistoryEntry(layer, beforeGraphics, [mergedGraphic], 'merge'))
       selection.clearSelection()
       if (mergedGraphic) await selection.selectGraphic(mergedGraphic, 'replace' as any)
       setMergeMode(false)
     } catch (e) { console.error('[UE] merge applyEdits error', e) }
-  }, [canMerge, sameLayerSelected, selectedLayer, sel, selection])
+  }, [canMerge, sameLayerSelected, selectedLayer, sel, selection, pushHistory])
 
   const onGeomToggle = React.useCallback(() => {
     if (!canGeom || sel.length !== 1) return
