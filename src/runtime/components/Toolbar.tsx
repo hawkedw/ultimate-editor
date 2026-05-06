@@ -13,7 +13,6 @@ interface Props {
   sketchMode: string
   canUndo: boolean
   canRedo: boolean
-  onCancelSketch: () => void
   onToggleAdd: () => void
   onToggleRemove: () => void
   onToggleSplit: () => void
@@ -39,7 +38,6 @@ const Toolbar = ({
   sketchMode,
   canUndo,
   canRedo,
-  onCancelSketch,
   onToggleAdd,
   onToggleRemove,
   onToggleSplit,
@@ -52,17 +50,6 @@ const Toolbar = ({
 }: Props) => (
   <div className='ue-tb'>
     <div className='ue-tb-info'>Выбрано: {selCount}</div>
-
-    {sketchMode === 'creating' && (
-      <button
-        type='button'
-        className='ue-tb-btn ue-tb-btn--danger'
-        title='Сбросить режим создания'
-        onClick={onCancelSketch}
-      >
-        Отменить создание
-      </button>
-    )}
 
     <button
       type='button'

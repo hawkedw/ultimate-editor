@@ -134,6 +134,8 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const [showSplitButton, setShowSplitButton] = React.useState(false)
   const [undoStack, setUndoStack] = React.useState<any[]>([])
   const [redoStack, setRedoStack] = React.useState<any[]>([])
+  const [historyBusy, setHistoryBusy] = React.useState(false)
+  const historyBusyRef = React.useRef(false)
 
   const selCleanupRef = React.useRef<(() => void) | null>(null)
   const geomCleanupRef = React.useRef<(() => void) | null>(null)
@@ -197,8 +199,8 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const canReshape = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
   const canMerge = !!layerRule?.allowGeomUpdate && sel.length >= 2 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
   const canGeom = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected
-  const canUndo = undoStack.length > 0
-  const canRedo = redoStack.length > 0
+  const canUndo = !historyBusy && undoStack.length > 0
+  const canRedo = !historyBusy && redoStack.length > 0
 
   React.useEffect(() => {
     if (!canMerge && mergeMode) { setMergeMode(false); clearMergePreview() }
@@ -542,25 +544,37 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   }, [geometry, selection])
 
   const onUndo = React.useCallback(async () => {
+    if (historyBusyRef.current) return
     const entry = undoStack[undoStack.length - 1]
     if (!entry) return
+    historyBusyRef.current = true
+    setHistoryBusy(true)
     resetUiState()
     try {
       await applyHistoryEntry(entry, 'undo')
       setUndoStack((prev) => prev.slice(0, -1))
       setRedoStack((prev) => [...prev, entry].slice(-MAX_HISTORY))
-    } catch (e) { console.error('[UE] undo error', e) }
+    } catch (e) { console.error('[UE] undo error', e) } finally {
+      historyBusyRef.current = false
+      setHistoryBusy(false)
+    }
   }, [undoStack, applyHistoryEntry, resetUiState])
 
   const onRedo = React.useCallback(async () => {
+    if (historyBusyRef.current) return
     const entry = redoStack[redoStack.length - 1]
     if (!entry) return
+    historyBusyRef.current = true
+    setHistoryBusy(true)
     resetUiState()
     try {
       await applyHistoryEntry(entry, 'redo')
       setRedoStack((prev) => prev.slice(0, -1))
       setUndoStack((prev) => [...prev, entry].slice(-MAX_HISTORY))
-    } catch (e) { console.error('[UE] redo error', e) }
+    } catch (e) { console.error('[UE] redo error', e) } finally {
+      historyBusyRef.current = false
+      setHistoryBusy(false)
+    }
   }, [redoStack, applyHistoryEntry, resetUiState])
 
   const onToggleAdd = React.useCallback(() => {
@@ -674,9 +688,12 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   }, [geometry, selection])
 
   const onSaveNew = React.useCallback(async (draftAttrs: Record<string, any>) => {
-    await geometry.confirmCreate(draftAttrs)
+    const item = sel[0]
+    const layer = item?.layer as any
+    const createdGraphic = await geometry.confirmCreate(draftAttrs)
+    if (layer && createdGraphic) pushHistory(makeHistoryEntry(layer, [], [createdGraphic], 'create'))
     selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
-  }, [geometry, selection])
+  }, [geometry, selection, sel, pushHistory])
 
   const onCancelNew = React.useCallback(async () => {
     await geometry.cancelCreate()

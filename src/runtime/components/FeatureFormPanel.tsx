@@ -324,15 +324,20 @@ const FeatureFormPanel = ({
         </div>
       )}
 
-      <div className='ue-form-body' style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div
+        className='ue-form-body'
+        style={{
+          display: 'block',
+          flex: '1 1 auto',
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden'
+        }}
+      >
         <div
           ref={hostRef}
           style={{
-            display: 'flex',
-            flexDirection: 'column',
-            flex: '1 1 auto',
-            minHeight: 0,
-            height: '100%'
+            minHeight: 0
           }}
         />
       </div>

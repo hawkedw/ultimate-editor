@@ -10,6 +10,20 @@ import type FeatureLayer from 'esri/layers/FeatureLayer'
 
 export type SketchMode = 'idle' | 'creating' | 'reshaping' | 'splitting' | 'reshapeLine' | 'updating'
 
+function sanitizeAttrsForAdd (layer: any, attrs: any = {}) {
+  const out = { ...(attrs || {}) }
+  const oidField = layer?.objectIdField || 'OBJECTID'
+  const gidField = layer?.globalIdField
+  delete out[oidField]
+  if (gidField) delete out[gidField]
+  delete out.OBJECTID
+  delete out.objectid
+  delete out.GlobalID
+  delete out.GLOBALID
+  delete out.globalid
+  return out
+}
+
 export function useGeometry () {
   const [sketchMode, setSketchMode] = useState<SketchMode>('idle')
   const sketchModeRef = useRef<SketchMode>('idle')
@@ -712,8 +726,11 @@ export function useGeometry () {
           return
         }
 
+        const updateFeatures: any[] = []
+        const updatedOids: any[] = []
         const deleteFeatures: any[] = []
         const addFeatures: any[] = []
+        const oidField = (layer as any).objectIdField || 'OBJECTID'
 
         for (const src of featuresToSplit) {
           let parts: any[] = []
@@ -726,30 +743,47 @@ export function useGeometry () {
 
           if (!parts?.length || parts.length < 2) continue
 
-          deleteFeatures.push(src)
-          addFeatures.push(
-            ...parts.map((p: any) => ({
-              geometry: p,
-              attributes: { ...src.attributes }
-            }))
-          )
+          const oid = src?.attributes?.[oidField]
+          if (oid != null) {
+            updateFeatures.push({
+              geometry: parts[0],
+              attributes: { [oidField]: oid }
+            })
+            updatedOids.push(oid)
+            addFeatures.push(
+              ...parts.slice(1).map((p: any) => ({
+                geometry: p,
+                attributes: sanitizeAttrsForAdd(layer, src.attributes)
+              }))
+            )
+          } else {
+            deleteFeatures.push(src)
+            addFeatures.push(
+              ...parts.map((p: any) => ({
+                geometry: p,
+                attributes: sanitizeAttrsForAdd(layer, src.attributes)
+              }))
+            )
+          }
         }
 
-        if (!deleteFeatures.length || !addFeatures.length) {
+        if (!updateFeatures.length && (!deleteFeatures.length || !addFeatures.length)) {
           _setMode('idle')
           cb({ before: [], after: [] })
           return
         }
 
         try {
-          const res = await layer.applyEdits({
-            deleteFeatures,
-            addFeatures
-          } as any)
+          const edits: any = {}
+          if (updateFeatures.length) edits.updateFeatures = updateFeatures
+          if (deleteFeatures.length) edits.deleteFeatures = deleteFeatures
+          if (addFeatures.length) edits.addFeatures = addFeatures
+          const res = await layer.applyEdits(edits as any)
 
-          const oids = (res.addFeatureResults || [])
+          const addedOids = (res.addFeatureResults || [])
             .map((r: any) => r.objectId)
             .filter((o: any) => o != null)
+          const oids = [...updatedOids, ...addedOids]
 
           let newGraphics: any[] = []
           if (oids.length) {
@@ -758,7 +792,8 @@ export function useGeometry () {
               outFields: ['*'],
               returnGeometry: true
             } as any)
-            newGraphics = q.features || []
+            const byOid = new Map((q.features || []).map((g: any) => [g?.attributes?.[oidField], g]))
+            newGraphics = oids.map((oid: any) => byOid.get(oid)).filter(Boolean)
           }
 
           cb({ before: featuresToSplit, after: newGraphics })
@@ -911,29 +946,42 @@ export function useGeometry () {
   }, [])
 
   const confirmCreate = useCallback(async (draftAttrs: Record<string, any>) => {
-  const graphic = reshapeGraphicRef.current
-  const oid = reshapeOidRef.current
-  const layer = reshapeLayerRef.current
-  suppressReshapeCancelRef.current = true
-  manualDoneRef.current = true
-  try { svmRef.current?.cancel() } catch {}
-  try { glRef.current?.removeAll?.() } catch {}
-  if (oid && layer) {
-    const oidF = (layer as any).objectIdField || 'OBJECTID'
-    const currentGeom = reshapeSketchGraphicRef.current?.geometry ?? graphic?.geometry
-    try {
-      await layer.applyEdits({
-        updateFeatures: [{
-          ...(currentGeom ? { geometry: currentGeom } : {}),
+    const graphic = reshapeGraphicRef.current
+    const oid = reshapeOidRef.current
+    const layer = reshapeLayerRef.current
+    let savedGraphic: any = null
+    let fallbackGraphic: any = null
+    suppressReshapeCancelRef.current = true
+    manualDoneRef.current = true
+    try { svmRef.current?.cancel() } catch {}
+    try { glRef.current?.removeAll?.() } catch {}
+    if (oid != null && layer) {
+      const oidF = (layer as any).objectIdField || 'OBJECTID'
+      const currentGeom = reshapeSketchGraphicRef.current?.geometry ?? graphic?.geometry
+      fallbackGraphic = graphic
+        ? new Graphic({
+          geometry: currentGeom,
           attributes: { ...(graphic?.attributes || {}), ...draftAttrs, [oidF]: oid }
-          //                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ЭТО ДОБАВЛЕНО
-        }]
-      } as any)
-    } catch (e) { console.error('[UE] confirmCreate error:', e) }
-  }
-  _clearReshape()
-  _setMode('idle')
-}, [])
+        } as any)
+        : null
+      try {
+        await layer.applyEdits({
+          updateFeatures: [{
+            ...(currentGeom ? { geometry: currentGeom } : {}),
+            attributes: { ...(graphic?.attributes || {}), ...draftAttrs, [oidF]: oid }
+          }]
+        } as any)
+        savedGraphic = await layer.queryFeatures({
+          objectIds: [oid],
+          outFields: ['*'],
+          returnGeometry: true
+        } as any).then((fs: any) => fs?.features?.[0] ?? null).catch(() => null)
+      } catch (e) { console.error('[UE] confirmCreate error:', e) }
+    }
+    _clearReshape()
+    _setMode('idle')
+    return savedGraphic || fallbackGraphic
+  }, [])
 
 
   const cancelCreate = useCallback(async () => {

@@ -200,6 +200,10 @@ export const rootCss = css`
     overflow: auto;
   }
 
+  .ue-form-host .esri-feature-form {
+    overflow: visible;
+  }
+
   .ue-btn {
     appearance: none;
     border: 1px solid rgba(255, 255, 255, 0.12);

@@ -94,7 +94,6 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
         sketchMode={ue.sketchMode}
         canUndo={ue.canUndo}
         canRedo={ue.canRedo}
-        onCancelSketch={ue.onCancelSketch}
         onToggleAdd={ue.onToggleAdd}
         onToggleRemove={ue.onToggleRemove}
         onToggleSplit={ue.onToggleSplit}

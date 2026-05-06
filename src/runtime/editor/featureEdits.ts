@@ -45,7 +45,7 @@ export async function addBlueprints (layer: any, blueprints: any[]) {
   const res = await layer.applyEdits({
     addFeatures: blueprints.map((b: any) => ({
       geometry: cloneGeometry(b.geometry),
-      attributes: { ...(b.attributes || {}) }
+      attributes: sanitizeAttrsForAdd(layer, b.attributes)
     }))
   } as any)
   const oids = (res?.addFeatureResults || []).map((r: any) => r.objectId).filter((o: any) => o != null)
@@ -57,17 +57,44 @@ export async function replaceFeatureSet (layer: any, currentGraphics: any[], tar
   const target = (targetBlueprints || []).filter(Boolean)
   const oidField = layer?.objectIdField || 'OBJECTID'
 
-  if (source.length === 1 && target.length === 1) {
-    const src = source[0]
-    const oid = src?.attributes?.[oidField]
-    if (oid != null) {
-      await layer.applyEdits({
-        updateFeatures: [{
-          ...(target[0]?.geometry ? { geometry: cloneGeometry(target[0].geometry) } : {}),
-          attributes: { ...(target[0]?.attributes || {}), [oidField]: oid }
-        }]
-      } as any)
-      return await queryGraphicsByOids(layer, [oid])
+  if (source.length && target.length) {
+    const updateFeatures: any[] = []
+    const updatedOids: any[] = []
+    const pairCount = Math.min(source.length, target.length)
+
+    for (let i = 0; i < pairCount; i++) {
+      const src = source[i]
+      const oid = src?.attributes?.[oidField]
+      if (oid == null) break
+      updateFeatures.push({
+        ...(target[i]?.geometry ? { geometry: cloneGeometry(target[i].geometry) } : {}),
+        attributes: { ...(target[i]?.attributes || {}), [oidField]: oid }
+      })
+      updatedOids.push(oid)
+    }
+
+    if (updateFeatures.length) {
+      const edits: any = { updateFeatures }
+      if (source.length > updateFeatures.length) edits.deleteFeatures = source.slice(updateFeatures.length)
+
+      const remainingTargets = target.slice(updateFeatures.length)
+      let addedGraphics: any[] = []
+      if (remainingTargets.length) {
+        const res = await layer.applyEdits({
+          ...edits,
+          addFeatures: remainingTargets.map((b: any) => ({
+            geometry: cloneGeometry(b.geometry),
+            attributes: sanitizeAttrsForAdd(layer, b.attributes)
+          }))
+        } as any)
+        const addedOids = (res?.addFeatureResults || []).map((r: any) => r.objectId).filter((o: any) => o != null)
+        addedGraphics = await queryGraphicsByOids(layer, addedOids)
+      } else {
+        await layer.applyEdits(edits as any)
+      }
+
+      const updatedGraphics = await queryGraphicsByOids(layer, updatedOids)
+      return [...updatedGraphics, ...addedGraphics]
     }
   }
 

@@ -322,7 +322,7 @@ export default function LayerConfig (props: {
                   />
                 </div>
               </th>
-              <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Знач.</th>
+              <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Значение</th>
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>Arcade</th>
             </tr>
           </thead>
