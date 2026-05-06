@@ -9,6 +9,7 @@ import FeatureFormPanel from './components/FeatureFormPanel'
 import BatchEditPanel from './components/BatchEditPanel'
 import MergePanel from './components/MergePanel'
 import Toolbar from './components/Toolbar'
+import ModeNoticePanel from './components/ModeNoticePanel'
 import { dlog, isDebugEnabled } from './debug'
 import { layerKey, resolveRuleEffective } from './utils/ueUtils'
 
@@ -72,6 +73,8 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   const isIdle = ue.sketchMode === 'idle'
   const isCreating = ue.sketchMode === 'creating'
+  const isReshapeLine = ue.sketchMode === 'reshapeLine'
+  const isSplitting = ue.sketchMode === 'splitting'
 
   return (
     <div className='ue-widget jimu-widget' css={rootCss}>
@@ -114,6 +117,22 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
             isCreating={isCreating}
             onCancelCreate={ue.onCancelSketch}
             onSelectTemplate={ue.onStartCreate}
+          />
+        )}
+
+        {isReshapeLine && (
+          <ModeNoticePanel
+            title='Режим редактирования формы включен'
+            text='Нарисуйте линию на карте, чтобы изменить форму полигона, или отмените режим.'
+            onCancel={ue.onCancelSketch}
+          />
+        )}
+
+        {isSplitting && (
+          <ModeNoticePanel
+            title='Режим разрезания включен'
+            text='Нарисуйте линию разреза на карте, или отмените режим.'
+            onCancel={ue.onCancelSketch}
           />
         )}
 
