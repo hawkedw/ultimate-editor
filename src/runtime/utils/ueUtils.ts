@@ -75,37 +75,47 @@ function boolOrUndef(v: any): boolean | undefined {
   return typeof v === 'boolean' ? v : undefined
 }
 
+function layerEditingEnabled(layer: any): boolean | undefined {
+  return boolOrUndef(layer?.effectiveEditingEnabled) ?? boolOrUndef(layer?.editingEnabled)
+}
+
 // ВАЖНО: supportsUpdate / supportsAdd / supportsDelete — это то, что нужно проверять.
 export function canUpdateByLayerCapabilities(layer: any): boolean {
+  const edit = layerEditingEnabled(layer)
+  if (edit === false) return false
+
   const ops = getOps(layer)
   const su = boolOrUndef(ops?.supportsUpdate) ?? boolOrUndef(ops?.update)
   const se = boolOrUndef(ops?.supportsEditing) ?? boolOrUndef(ops?.edit)
   if (su !== undefined) return su
   if (se !== undefined) return se
 
-  const edit = boolOrUndef(layer?.editingEnabled)
   if (edit !== undefined) return edit
 
   return true
 }
 
 export function canCreateByLayerCapabilities(layer: any): boolean {
+  const edit = layerEditingEnabled(layer)
+  if (edit === false) return false
+
   const ops = getOps(layer)
   const sa = boolOrUndef(ops?.supportsAdd) ?? boolOrUndef(ops?.supportsCreate) ?? boolOrUndef(ops?.create)
   if (sa !== undefined) return sa
 
-  const edit = boolOrUndef(layer?.editingEnabled)
   if (edit !== undefined) return edit
 
   return true
 }
 
 export function canDeleteByLayerCapabilities(layer: any): boolean {
+  const edit = layerEditingEnabled(layer)
+  if (edit === false) return false
+
   const ops = getOps(layer)
   const sd = boolOrUndef(ops?.supportsDelete) ?? boolOrUndef(ops?.delete)
   if (sd !== undefined) return sd
 
-  const edit = boolOrUndef(layer?.editingEnabled)
   if (edit !== undefined) return edit
 
   return true

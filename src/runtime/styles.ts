@@ -434,6 +434,37 @@ export const rootCss = css`
     display: block;
   }
 
+  .ue-template-symbol-preview {
+    width: 38px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .ue-template-symbol-preview > * {
+    max-width: 38px;
+    max-height: 28px;
+  }
+
+  .ue-template-symbol-rendered {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ue-template-symbol-rendered--hidden {
+    display: none;
+  }
+
+  .ue-template-image-symbol {
+    max-width: 34px;
+    max-height: 24px;
+    object-fit: contain;
+    display: block;
+  }
+
   .ue-template-tile__label {
     font-size: 12px;
     line-height: 1.25;

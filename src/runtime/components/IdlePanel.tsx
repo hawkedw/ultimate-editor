@@ -1,6 +1,7 @@
 import { React } from 'jimu-core'
 import type FeatureLayer from 'esri/layers/FeatureLayer'
 import Graphic from 'esri/Graphic'
+import * as symbolUtils from 'esri/symbols/support/symbolUtils'
 import { layerKey } from '../utils/ueUtils'
 
 interface Props {
@@ -18,6 +19,7 @@ type SymbolInfo = {
   fill: string
   style?: string
   path?: string
+  imageUrl?: string
 }
 
 type TemplateItem = {
@@ -26,6 +28,7 @@ type TemplateItem = {
   template: __esri.FeatureTemplate
   label: string
   layerTitle: string
+  symbol: any
   symbolInfo: SymbolInfo
 }
 
@@ -121,13 +124,20 @@ const symbolToInfo = (layer: any, symbol: any): SymbolInfo => {
     }
   }
 
+  const imageUrl = symbol?.url
+    ? String(symbol.url)
+    : symbol?.imageData && symbol?.contentType
+      ? `data:${symbol.contentType};base64,${symbol.imageData}`
+      : undefined
+
   return {
     kind: 'point',
     stroke: rgbaToCss(symbol?.outline?.color || symbol?.color, '#49e7ff'),
     strokeWidth: Number(symbol?.outline?.width ?? 1.4),
     fill: rgbaToCss(symbol?.color, '#49e7ff'),
     style: String(symbol?.style || (symbol?.path ? 'path' : 'circle')),
-    path: typeof symbol?.path === 'string' ? symbol.path : undefined
+    path: typeof symbol?.path === 'string' ? symbol.path : undefined,
+    imageUrl
   }
 }
 
@@ -235,6 +245,7 @@ const getTemplateItems = async (layers: FeatureLayer[]): Promise<TemplateItem[]>
         template: item.template,
         label: item.label,
         layerTitle,
+        symbol,
         symbolInfo: symbolToInfo(layer as any, symbol)
       })
     }
@@ -265,7 +276,7 @@ const groupTemplateItems = (items: TemplateItem[]): TemplateGroup[] => {
   return groups
 }
 
-const TemplateIcon = ({ info }: { info: SymbolInfo }) => {
+const ManualTemplateIcon = ({ info }: { info: SymbolInfo }) => {
   if (info.kind === 'polygon') {
     const hatch = info.style && info.style !== 'solid' && info.style !== 'none'
     return (
@@ -305,6 +316,18 @@ const TemplateIcon = ({ info }: { info: SymbolInfo }) => {
 
   const pointStyle = (info.style || 'circle').toLowerCase()
   const pointStroke = Math.max(info.strokeWidth, 1.2)
+
+  if (info.imageUrl) {
+    return (
+      <img
+        src={info.imageUrl}
+        className='ue-template-image-symbol'
+        aria-hidden='true'
+        alt=''
+      />
+    )
+  }
+
   if (pointStyle === 'square') {
     return (
       <svg viewBox='0 0 32 24' className='ue-template-svg' aria-hidden='true'>
@@ -360,6 +383,50 @@ const TemplateIcon = ({ info }: { info: SymbolInfo }) => {
         strokeWidth={info.strokeWidth}
       />
     </svg>
+  )
+}
+
+const TemplateIcon = ({ info, symbol }: { info: SymbolInfo, symbol: any }) => {
+  const hostRef = React.useRef<HTMLDivElement | null>(null)
+  const [hasPreview, setHasPreview] = React.useState(false)
+
+  React.useEffect(() => {
+    let cancelled = false
+    const host = hostRef.current
+    if (!host || !symbol) {
+      setHasPreview(false)
+      return
+    }
+
+    host.innerHTML = ''
+    setHasPreview(false)
+
+    ;(async () => {
+      try {
+        const preview = await (symbolUtils as any).renderPreviewHTML(symbol, { size: 32 })
+        if (cancelled || !preview || !hostRef.current) return
+        hostRef.current.innerHTML = ''
+        hostRef.current.appendChild(preview)
+        setHasPreview(true)
+      } catch {
+        if (!cancelled) setHasPreview(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (host) host.innerHTML = ''
+    }
+  }, [symbol])
+
+  return (
+    <div className='ue-template-symbol-preview'>
+      <span
+        ref={hostRef}
+        className={hasPreview ? 'ue-template-symbol-rendered' : 'ue-template-symbol-rendered ue-template-symbol-rendered--hidden'}
+      />
+      {!hasPreview && <ManualTemplateIcon info={info} />}
+    </div>
   )
 }
 
@@ -425,7 +492,7 @@ const IdlePanel = ({ templateLayers, showAttrHint, isCreating, onCancelCreate, o
                       disabled={isCreating}
                     >
                       <div className='ue-template-tile__symbol'>
-                        <TemplateIcon info={item.symbolInfo} />
+                        <TemplateIcon info={item.symbolInfo} symbol={item.symbol} />
                       </div>
                       <div className='ue-template-tile__label'>{item.label}</div>
                     </button>
