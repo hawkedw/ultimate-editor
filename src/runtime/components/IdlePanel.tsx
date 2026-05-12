@@ -16,6 +16,8 @@ type SymbolInfo = {
   stroke: string
   strokeWidth: number
   fill: string
+  style?: string
+  path?: string
 }
 
 type TemplateItem = {
@@ -105,7 +107,8 @@ const symbolToInfo = (layer: any, symbol: any): SymbolInfo => {
       kind: 'polygon',
       stroke: rgbaToCss(symbol?.outline?.color, '#49e7ff'),
       strokeWidth: Number(symbol?.outline?.width ?? 1.4),
-      fill: rgbaToCss(symbol?.color, 'rgba(0,0,0,0)')
+      fill: rgbaToCss(symbol?.color, 'rgba(0,0,0,0)'),
+      style: String(symbol?.style || 'solid')
     }
   }
 
@@ -122,8 +125,64 @@ const symbolToInfo = (layer: any, symbol: any): SymbolInfo => {
     kind: 'point',
     stroke: rgbaToCss(symbol?.outline?.color || symbol?.color, '#49e7ff'),
     strokeWidth: Number(symbol?.outline?.width ?? 1.4),
-    fill: rgbaToCss(symbol?.color, '#49e7ff')
+    fill: rgbaToCss(symbol?.color, '#49e7ff'),
+    style: String(symbol?.style || (symbol?.path ? 'path' : 'circle')),
+    path: typeof symbol?.path === 'string' ? symbol.path : undefined
   }
+}
+
+const unquote = (value: string) => value.trim().replace(/^['"]|['"]$/g, '')
+
+const attrValue = (attrs: Record<string, any>, field: string) => {
+  const clean = field.trim().replace(/^["']|["']$/g, '')
+  const exact = attrs[clean]
+  if (exact !== undefined) return exact
+  const found = Object.keys(attrs).find((k) => k.toLowerCase() === clean.toLowerCase())
+  return found ? attrs[found] : undefined
+}
+
+const sameSqlValue = (a: any, b: string) => {
+  const right = unquote(b)
+  const n1 = Number(a)
+  const n2 = Number(right)
+  if (Number.isFinite(n1) && Number.isFinite(n2)) return n1 === n2
+  return String(a ?? '').toLowerCase() === right.toLowerCase()
+}
+
+const templateMatchesWhere = (attrs: Record<string, any>, where: string) => {
+  const clauses = String(where || '').split(/\s+and\s+/i).map((x) => x.trim()).filter(Boolean)
+  if (!clauses.length) return true
+
+  for (const clause of clauses) {
+    if (/^\(?\s*1\s*=\s*1\s*\)?$/i.test(clause)) continue
+    if (/^\(?\s*1\s*=\s*0\s*\)?$/i.test(clause)) return false
+
+    const inMatch = clause.match(/^\(?\s*"?([\w.]+)"?\s+in\s*\((.+)\)\s*\)?$/i)
+    if (inMatch) {
+      const value = attrValue(attrs, inMatch[1])
+      if (value === undefined || value === null || value === '') continue
+      const allowed = inMatch[2].split(',').map(unquote)
+      if (!allowed.some((x) => sameSqlValue(value, x))) return false
+      continue
+    }
+
+    const eqMatch = clause.match(/^\(?\s*"?([\w.]+)"?\s*(=|<>|!=)\s*(.+?)\s*\)?$/i)
+    if (eqMatch) {
+      const value = attrValue(attrs, eqMatch[1])
+      if (value === undefined || value === null || value === '') continue
+      const ok = sameSqlValue(value, eqMatch[3])
+      if ((eqMatch[2] === '=' && !ok) || (eqMatch[2] !== '=' && ok)) return false
+    }
+  }
+
+  return true
+}
+
+const templateMatchesLayer = (layer: any, template: any) => {
+  const attrs = { ...((template?.prototype?.attributes || {}) as Record<string, any>) }
+  const where = String(layer?.definitionExpression || '').trim()
+  if (!where) return true
+  return templateMatchesWhere(attrs, where)
 }
 
 const getTemplateItems = async (layers: FeatureLayer[]): Promise<TemplateItem[]> => {
@@ -134,28 +193,37 @@ const getTemplateItems = async (layers: FeatureLayer[]): Promise<TemplateItem[]>
 
     const layerTitle = (layer as any).title || 'Слой'
     const allTemplates: Array<{ template: __esri.FeatureTemplate, key: string, label: string }> = []
+    const seenTemplates = new Set<string>()
+
+    const pushTemplate = (template: any, key: string, label: string) => {
+      if (!templateMatchesLayer(layer, template)) return
+      const signature = `${template?.name || label || 'template'}::${JSON.stringify(template?.prototype?.attributes || {})}`
+      if (seenTemplates.has(signature)) return
+      seenTemplates.add(signature)
+      allTemplates.push({ template, key, label })
+    }
 
     const directTemplates: __esri.FeatureTemplate[] = Array.isArray((layer as any).templates)
       ? (layer as any).templates
       : []
 
     directTemplates.forEach((template: any, idx: number) => {
-      allTemplates.push({
+      pushTemplate(
         template,
-        key: `${(layer as any).id || layerTitle}__tpl__${idx}__${template?.name || 'template'}`,
-        label: template?.name || 'Шаблон'
-      })
+        `${(layer as any).id || layerTitle}__tpl__${idx}__${template?.name || 'template'}`,
+        template?.name || 'Шаблон'
+      )
     })
 
     const types: any[] = Array.isArray((layer as any).types) ? (layer as any).types : []
     types.forEach((tp: any, typeIdx: number) => {
       const templates: __esri.FeatureTemplate[] = Array.isArray(tp?.templates) ? tp.templates : []
       templates.forEach((template: any, tplIdx: number) => {
-        allTemplates.push({
+        pushTemplate(
           template,
-          key: `${(layer as any).id || layerTitle}__type__${typeIdx}__tpl__${tplIdx}__${template?.name || 'template'}`,
-          label: template?.name || tp?.name || 'Шаблон'
-        })
+          `${(layer as any).id || layerTitle}__type__${typeIdx}__tpl__${tplIdx}__${template?.name || 'template'}`,
+          template?.name || tp?.name || 'Шаблон'
+        )
       })
     })
 
@@ -199,11 +267,19 @@ const groupTemplateItems = (items: TemplateItem[]): TemplateGroup[] => {
 
 const TemplateIcon = ({ info }: { info: SymbolInfo }) => {
   if (info.kind === 'polygon') {
+    const hatch = info.style && info.style !== 'solid' && info.style !== 'none'
     return (
       <svg viewBox='0 0 32 24' className='ue-template-svg' aria-hidden='true'>
+        {hatch && (
+          <defs>
+            <pattern id='ue-template-hatch' width='4' height='4' patternUnits='userSpaceOnUse' patternTransform='rotate(45)'>
+              <line x1='0' y1='0' x2='0' y2='4' stroke={info.stroke} strokeWidth='1' />
+            </pattern>
+          </defs>
+        )}
         <polygon
           points='5,19 6,6 26,7 24,17'
-          fill={info.fill}
+          fill={hatch ? 'url(#ue-template-hatch)' : info.fill}
           stroke={info.stroke}
           strokeWidth={info.strokeWidth}
           strokeLinejoin='round'
@@ -223,6 +299,52 @@ const TemplateIcon = ({ info }: { info: SymbolInfo }) => {
           strokeLinecap='round'
           strokeLinejoin='round'
         />
+      </svg>
+    )
+  }
+
+  const pointStyle = (info.style || 'circle').toLowerCase()
+  const pointStroke = Math.max(info.strokeWidth, 1.2)
+  if (pointStyle === 'square') {
+    return (
+      <svg viewBox='0 0 32 24' className='ue-template-svg' aria-hidden='true'>
+        <rect x='11' y='7' width='10' height='10' fill={info.fill} stroke={info.stroke} strokeWidth={pointStroke} />
+      </svg>
+    )
+  }
+
+  if (pointStyle === 'diamond') {
+    return (
+      <svg viewBox='0 0 32 24' className='ue-template-svg' aria-hidden='true'>
+        <polygon points='16,5 24,12 16,19 8,12' fill={info.fill} stroke={info.stroke} strokeWidth={pointStroke} />
+      </svg>
+    )
+  }
+
+  if (pointStyle === 'triangle') {
+    return (
+      <svg viewBox='0 0 32 24' className='ue-template-svg' aria-hidden='true'>
+        <polygon points='16,5 24,19 8,19' fill={info.fill} stroke={info.stroke} strokeWidth={pointStroke} />
+      </svg>
+    )
+  }
+
+  if ((pointStyle === 'cross' || pointStyle === 'x') && !info.path) {
+    const rotate = pointStyle === 'x' ? 'rotate(45 16 12)' : undefined
+    return (
+      <svg viewBox='0 0 32 24' className='ue-template-svg' aria-hidden='true'>
+        <g transform={rotate}>
+          <line x1='16' y1='5' x2='16' y2='19' stroke={info.stroke} strokeWidth='3' strokeLinecap='round' />
+          <line x1='9' y1='12' x2='23' y2='12' stroke={info.stroke} strokeWidth='3' strokeLinecap='round' />
+        </g>
+      </svg>
+    )
+  }
+
+  if (info.path) {
+    return (
+      <svg viewBox='-16 -16 32 32' className='ue-template-svg' aria-hidden='true'>
+        <path d={info.path} fill={info.fill} stroke={info.stroke} strokeWidth={pointStroke} />
       </svg>
     )
   }

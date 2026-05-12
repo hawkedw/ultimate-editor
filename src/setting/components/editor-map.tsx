@@ -49,6 +49,13 @@ function layerCanUpdateGeom (l: any): boolean {
   return true
 }
 
+function layerInstanceKey (l: any, idx: number): string {
+  const id = l?.id != null ? String(l.id) : ''
+  if (id) return id
+  const title = l?.title != null ? String(l.title) : ''
+  return title || `layer-${idx}`
+}
+
 function collectFeatureLayersFromMap (view: any): any[] {
   const ordered: any[] = []
   const seen = new Set<any>()
@@ -80,8 +87,7 @@ function getEditableFeatureLayersFromView (jmv: JimuMapView | null): LayerMeta[]
     const lidNum = lid != null && Number.isFinite(Number(lid)) ? Number(lid) : null
     let resolvedUrl = cleanUrl
     if (resolvedUrl && !/\/\d+$/.test(resolvedUrl) && lidNum != null) resolvedUrl = `${resolvedUrl}/${lidNum}`
-    const id = l?.id != null ? String(l.id) : ''
-    const key = resolvedUrl ? normUrl(resolvedUrl) : (id || `layer-${idx}`)
+    const key = layerInstanceKey(l, idx)
     const ops = layerOps(l)
     const canAdd = !!ops?.supportsAdd
     const canUpdate = !!ops?.supportsUpdate
@@ -99,9 +105,11 @@ function isEnabled (rule: LayerRule | null): boolean {
 function findRule (rules: LayerRule[], meta: LayerMeta): LayerRule | null {
   const k = norm(meta.key)
   const u = meta.url ? normUrl(meta.url) : ''
+  const byId = rules.find(r => r?.id && norm(r.id) === k)
+  if (byId) return byId
   return rules.find(r => {
-    if (r?.id && norm(r.id) === k) return true
     if (r?.url && u && normUrl(r.url) === u) return true
+    if (r?.id && u && normUrl(r.id) === u) return true
     return false
   }) ?? null
 }

@@ -10,8 +10,9 @@ export function layerKey(layer: __esri.Layer | null | undefined): string {
   const lid = a?.layerId ?? a?.layer?.layerId
   const id = (a?.id as string) || ''
   const title = (a?.title as string) || ''
-  if (url) return `${url}::${lid ?? id ?? title ?? 'layer'}`
-  return `${id || title || 'layer'}::${lid ?? ''}`
+  if (id) return `id::${id}`
+  if (url) return `${url}::${lid ?? title ?? 'layer'}`
+  return `${title || 'layer'}::${lid ?? ''}`
 }
 
 export function isFeatureLayer(layer: any): layer is FeatureLayer {
@@ -20,6 +21,10 @@ export function isFeatureLayer(layer: any): layer is FeatureLayer {
 
 export function oidField(layer: any): string {
   return (layer?.objectIdField as string) || 'OBJECTID'
+}
+
+function normUrl(url: any): string {
+  return String(url ?? '').trim().replace(/\/+$/, '').toLowerCase()
 }
 
 export function getGraphicOid(g: Graphic): number | null {
@@ -43,8 +48,9 @@ function ruleMatchScore(rule: LayerRule, layer: any): number {
   const id = (layer?.id as string) || ''
   const title = (layer?.title as string) || ''
   let score = 0
-  if (rule.url && url && rule.url === url) score += 100
-  if (rule.id && id && rule.id === id) score += 50
+  if (rule.id && id && rule.id === id) score += 200
+  if (rule.url && url && normUrl(rule.url) === normUrl(url)) score += 100
+  if (rule.id && url && normUrl(rule.id) === normUrl(url)) score += 90
   if (rule.title && title && rule.title === title) score += 10
   return score
 }
