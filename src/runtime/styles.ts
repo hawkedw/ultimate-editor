@@ -444,14 +444,27 @@ export const rootCss = css`
   }
 
   .ue-template-symbol-preview > * {
-    max-width: 38px;
-    max-height: 28px;
+    max-width: 24px !important;
+    max-height: 20px !important;
+  }
+
+  .ue-template-symbol-preview svg,
+  .ue-template-symbol-preview canvas,
+  .ue-template-symbol-preview img {
+    max-width: 24px !important;
+    max-height: 20px !important;
+    width: auto !important;
+    height: auto !important;
+    object-fit: contain;
   }
 
   .ue-template-symbol-rendered {
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 24px;
+    height: 20px;
+    overflow: hidden;
   }
 
   .ue-template-symbol-rendered--hidden {
