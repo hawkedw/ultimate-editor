@@ -403,7 +403,13 @@ const TemplateIcon = ({ info, symbol }: { info: SymbolInfo, symbol: any }) => {
 
     ;(async () => {
       try {
-        const preview = await (symbolUtils as any).renderPreviewHTML(symbol, { size: 32 })
+        const previewSize = info.kind === 'point'
+          ? 14
+          : { width: 34, height: 24 }
+        const preview = await (symbolUtils as any).renderPreviewHTML(symbol, {
+          size: previewSize,
+          maxSize: info.kind === 'point' ? 18 : 34
+        })
         if (cancelled || !preview || !hostRef.current) return
         hostRef.current.innerHTML = ''
         hostRef.current.appendChild(preview)
@@ -417,7 +423,7 @@ const TemplateIcon = ({ info, symbol }: { info: SymbolInfo, symbol: any }) => {
       cancelled = true
       if (host) host.innerHTML = ''
     }
-  }, [symbol])
+  }, [info.kind, symbol])
 
   return (
     <div className='ue-template-symbol-preview'>

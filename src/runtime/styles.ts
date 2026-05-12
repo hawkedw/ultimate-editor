@@ -440,31 +440,16 @@ export const rootCss = css`
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow: hidden;
-  }
-
-  .ue-template-symbol-preview > * {
-    max-width: 24px !important;
-    max-height: 20px !important;
-  }
-
-  .ue-template-symbol-preview svg,
-  .ue-template-symbol-preview canvas,
-  .ue-template-symbol-preview img {
-    max-width: 24px !important;
-    max-height: 20px !important;
-    width: auto !important;
-    height: auto !important;
-    object-fit: contain;
+    overflow: visible;
   }
 
   .ue-template-symbol-rendered {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 20px;
-    overflow: hidden;
+    width: 38px;
+    height: 28px;
+    overflow: visible;
   }
 
   .ue-template-symbol-rendered--hidden {
