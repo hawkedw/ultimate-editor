@@ -29,6 +29,7 @@ type TemplateItem = {
   label: string
   layerTitle: string
   symbol: any
+  symbolType?: string
   symbolInfo: SymbolInfo
 }
 
@@ -246,6 +247,7 @@ const getTemplateItems = async (layers: FeatureLayer[]): Promise<TemplateItem[]>
         label: item.label,
         layerTitle,
         symbol,
+        symbolType: String(symbol?.type || '').toLowerCase(),
         symbolInfo: symbolToInfo(layer as any, symbol)
       })
     }
@@ -386,14 +388,15 @@ const ManualTemplateIcon = ({ info }: { info: SymbolInfo }) => {
   )
 }
 
-const TemplateIcon = ({ info, symbol }: { info: SymbolInfo, symbol: any }) => {
+const TemplateIcon = ({ info, symbol, symbolType }: { info: SymbolInfo, symbol: any, symbolType?: string }) => {
+  const canUsePreview = info.kind === 'point' && !!symbol && !['', 'simple-marker', 'picture-marker'].includes(String(symbolType || '').toLowerCase())
   const hostRef = React.useRef<HTMLDivElement | null>(null)
   const [hasPreview, setHasPreview] = React.useState(false)
 
   React.useEffect(() => {
     let cancelled = false
     const host = hostRef.current
-    if (!host || !symbol) {
+    if (!host || !canUsePreview) {
       setHasPreview(false)
       return
     }
@@ -423,15 +426,15 @@ const TemplateIcon = ({ info, symbol }: { info: SymbolInfo, symbol: any }) => {
       cancelled = true
       if (host) host.innerHTML = ''
     }
-  }, [info.kind, symbol])
+  }, [canUsePreview, info.kind, symbol])
 
   return (
     <div className='ue-template-symbol-preview'>
       <span
         ref={hostRef}
-        className={hasPreview ? 'ue-template-symbol-rendered' : 'ue-template-symbol-rendered ue-template-symbol-rendered--hidden'}
+        className={hasPreview && canUsePreview ? 'ue-template-symbol-rendered' : 'ue-template-symbol-rendered ue-template-symbol-rendered--hidden'}
       />
-      {!hasPreview && <ManualTemplateIcon info={info} />}
+      {(!hasPreview || !canUsePreview) && <ManualTemplateIcon info={info} />}
     </div>
   )
 }
@@ -498,7 +501,7 @@ const IdlePanel = ({ templateLayers, showAttrHint, isCreating, onCancelCreate, o
                       disabled={isCreating}
                     >
                       <div className='ue-template-tile__symbol'>
-                        <TemplateIcon info={item.symbolInfo} symbol={item.symbol} />
+                        <TemplateIcon info={item.symbolInfo} symbol={item.symbol} symbolType={item.symbolType} />
                       </div>
                       <div className='ue-template-tile__label'>{item.label}</div>
                     </button>
