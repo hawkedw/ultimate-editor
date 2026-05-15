@@ -1,7 +1,6 @@
 import { React } from 'jimu-core'
 import type FeatureLayer from 'esri/layers/FeatureLayer'
 import Graphic from 'esri/Graphic'
-import * as symbolUtils from 'esri/symbols/support/symbolUtils'
 import { layerKey } from '../utils/ueUtils'
 
 interface Props {
@@ -28,8 +27,6 @@ type TemplateItem = {
   template: __esri.FeatureTemplate
   label: string
   layerTitle: string
-  symbol: any
-  symbolType?: string
   symbolInfo: SymbolInfo
 }
 
@@ -64,6 +61,38 @@ const rgbaToCss = (v: any, fallback: string) => {
 const cloneSymbol = (s: any) => {
   if (!s) return null
   try { return s.clone ? s.clone() : s } catch { return s }
+}
+
+const findSymbolImageUrl = (value: any, depth = 0, seen = new WeakSet<object>()): string | undefined => {
+  if (!value || depth > 6 || typeof value !== 'object') return undefined
+  if (seen.has(value)) return undefined
+  seen.add(value)
+
+  const rawUrl = value.url || value.href || value.imageUrl || value.src
+  if (typeof rawUrl === 'string' && rawUrl.trim()) return rawUrl
+
+  if (typeof value.imageData === 'string' && value.imageData.trim()) {
+    if (value.imageData.startsWith('data:')) return value.imageData
+    const contentType = typeof value.contentType === 'string' && value.contentType.trim()
+      ? value.contentType
+      : 'image/png'
+    return `data:${contentType};base64,${value.imageData}`
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findSymbolImageUrl(item, depth + 1, seen)
+      if (found) return found
+    }
+    return undefined
+  }
+
+  for (const key of Object.keys(value)) {
+    const found = findSymbolImageUrl(value[key], depth + 1, seen)
+    if (found) return found
+  }
+
+  return undefined
 }
 
 const pickFallbackSymbol = (layer: any) => {
@@ -125,11 +154,7 @@ const symbolToInfo = (layer: any, symbol: any): SymbolInfo => {
     }
   }
 
-  const imageUrl = symbol?.url
-    ? String(symbol.url)
-    : symbol?.imageData && symbol?.contentType
-      ? `data:${symbol.contentType};base64,${symbol.imageData}`
-      : undefined
+  const imageUrl = findSymbolImageUrl(symbol)
 
   return {
     kind: 'point',
@@ -246,8 +271,6 @@ const getTemplateItems = async (layers: FeatureLayer[]): Promise<TemplateItem[]>
         template: item.template,
         label: item.label,
         layerTitle,
-        symbol,
-        symbolType: String(symbol?.type || '').toLowerCase(),
         symbolInfo: symbolToInfo(layer as any, symbol)
       })
     }
@@ -388,56 +411,7 @@ const ManualTemplateIcon = ({ info }: { info: SymbolInfo }) => {
   )
 }
 
-const TemplateIcon = ({ info, symbol, symbolType }: { info: SymbolInfo, symbol: any, symbolType?: string }) => {
-  const canUsePreview = info.kind === 'point' && !!symbol && !['', 'simple-marker', 'picture-marker'].includes(String(symbolType || '').toLowerCase())
-  const hostRef = React.useRef<HTMLDivElement | null>(null)
-  const [hasPreview, setHasPreview] = React.useState(false)
-
-  React.useEffect(() => {
-    let cancelled = false
-    const host = hostRef.current
-    if (!host || !canUsePreview) {
-      setHasPreview(false)
-      return
-    }
-
-    host.innerHTML = ''
-    setHasPreview(false)
-
-    ;(async () => {
-      try {
-        const previewSize = info.kind === 'point'
-          ? 14
-          : { width: 34, height: 24 }
-        const preview = await (symbolUtils as any).renderPreviewHTML(symbol, {
-          size: previewSize,
-          maxSize: info.kind === 'point' ? 18 : 34
-        })
-        if (cancelled || !preview || !hostRef.current) return
-        hostRef.current.innerHTML = ''
-        hostRef.current.appendChild(preview)
-        setHasPreview(true)
-      } catch {
-        if (!cancelled) setHasPreview(false)
-      }
-    })()
-
-    return () => {
-      cancelled = true
-      if (host) host.innerHTML = ''
-    }
-  }, [canUsePreview, info.kind, symbol])
-
-  return (
-    <div className='ue-template-symbol-preview'>
-      <span
-        ref={hostRef}
-        className={hasPreview && canUsePreview ? 'ue-template-symbol-rendered' : 'ue-template-symbol-rendered ue-template-symbol-rendered--hidden'}
-      />
-      {(!hasPreview || !canUsePreview) && <ManualTemplateIcon info={info} />}
-    </div>
-  )
-}
+const TemplateIcon = ({ info }: { info: SymbolInfo }) => <ManualTemplateIcon info={info} />
 
 const IdlePanel = ({ templateLayers, showAttrHint, isCreating, onCancelCreate, onSelectTemplate }: Props) => {
   const [items, setItems] = React.useState<TemplateItem[]>([])
@@ -501,7 +475,7 @@ const IdlePanel = ({ templateLayers, showAttrHint, isCreating, onCancelCreate, o
                       disabled={isCreating}
                     >
                       <div className='ue-template-tile__symbol'>
-                        <TemplateIcon info={item.symbolInfo} symbol={item.symbol} symbolType={item.symbolType} />
+                        <TemplateIcon info={item.symbolInfo} />
                       </div>
                       <div className='ue-template-tile__label'>{item.label}</div>
                     </button>

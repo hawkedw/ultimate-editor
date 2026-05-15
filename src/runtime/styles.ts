@@ -434,28 +434,6 @@ export const rootCss = css`
     display: block;
   }
 
-  .ue-template-symbol-preview {
-    width: 38px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: visible;
-  }
-
-  .ue-template-symbol-rendered {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 38px;
-    height: 28px;
-    overflow: visible;
-  }
-
-  .ue-template-symbol-rendered--hidden {
-    display: none;
-  }
-
   .ue-template-image-symbol {
     max-width: 34px;
     max-height: 24px;
