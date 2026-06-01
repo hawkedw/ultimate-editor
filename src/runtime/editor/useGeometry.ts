@@ -30,6 +30,8 @@ export function useGeometry () {
 
   const svmRef = useRef<any>(null)
   const glRef = useRef<any>(null)
+  const liveLabelLayerRef = useRef<any>(null)
+  const liveLabelGraphicRef = useRef<any>(null)
 
   const createLayerRef = useRef<any>(null)
   const createTemplateRef = useRef<any>(null)
@@ -76,6 +78,17 @@ export function useGeometry () {
     createCbRef.current = null
   }
 
+  const _clearLiveAreaLabel = () => {
+    try {
+      if (liveLabelGraphicRef.current && liveLabelLayerRef.current) {
+        liveLabelLayerRef.current.remove?.(liveLabelGraphicRef.current)
+      } else {
+        liveLabelLayerRef.current?.removeAll?.()
+      }
+    } catch {}
+    liveLabelGraphicRef.current = null
+  }
+
   const _clearReshape = () => {
     suppressReshapeCancelRef.current = false
     try {
@@ -90,6 +103,7 @@ export function useGeometry () {
     reshapeSketchGraphicRef.current = null
     reshapeReadyRef.current = false
     manualDoneRef.current = false
+    _clearLiveAreaLabel()
   }
 
   const _clearUpdate = () => {
@@ -109,6 +123,7 @@ export function useGeometry () {
     suppressUpdateCancelRef.current = false
     updateSourceGraphicRef.current = null
     updateSourceVisibleRef.current = true
+    _clearLiveAreaLabel()
   }
 
   const _clearReshapeLine = () => {
@@ -192,6 +207,91 @@ export function useGeometry () {
     } catch {}
     const ring = getOuterRing(polygon)
     return ring ? Math.abs(ringArea(ring)) : 0
+  }
+
+  const getAreaHectares = (polygon: any) => {
+    if (!polygon) return null
+    const sr = polygon?.spatialReference
+    try {
+      const area = sr?.isWGS84 || sr?.isWebMercator
+        ? Number((geometryEngine as any).geodesicArea?.(polygon, 'hectares'))
+        : Number((geometryEngine as any).planarArea?.(polygon, 'hectares'))
+      if (Number.isFinite(area) && area >= 0) return area
+    } catch {}
+    try {
+      const area = Number((geometryEngine as any).geodesicArea?.(polygon, 'hectares'))
+      if (Number.isFinite(area) && area >= 0) return area
+    } catch {}
+    try {
+      const area = Number((geometryEngine as any).planarArea?.(polygon, 'hectares'))
+      if (Number.isFinite(area) && area >= 0) return area
+    } catch {}
+    const fallback = polygonAreaAbs(polygon) / 10000
+    return Number.isFinite(fallback) && fallback >= 0 ? fallback : null
+  }
+
+  const cloneSymbolLike = (symbol: any) => {
+    if (!symbol) return null
+    try {
+      if (typeof symbol.clone === 'function') return symbol.clone()
+    } catch {}
+    try {
+      if (typeof symbol.toJSON === 'function') return symbol.toJSON()
+    } catch {}
+    try {
+      return JSON.parse(JSON.stringify(symbol))
+    } catch {}
+    return null
+  }
+
+  const getPolygonLabelPoint = (polygon: any) => {
+    if (!polygon) return null
+    try {
+      const c = polygon.centroid
+      if (c) return c.clone ? c.clone() : c
+    } catch {}
+    try {
+      const center = polygon.extent?.center
+      if (center) return center.clone ? center.clone() : center
+    } catch {}
+    return null
+  }
+
+  const buildLiveAreaLabelSymbol = (layer: any, text: string) => {
+    const baseSymbol = cloneSymbolLike(layer?.labelingInfo?.find((lc: any) => lc?.symbol)?.symbol)
+    const symbol = baseSymbol && String(baseSymbol?.type || '').toLowerCase() === 'text'
+      ? baseSymbol
+      : {
+          type: 'text',
+          color: [255, 255, 255, 1],
+          haloColor: [0, 0, 0, 0.9],
+          haloSize: 1.5,
+          font: {
+            family: 'Avenir Next W00',
+            size: 11,
+            weight: 'normal'
+          },
+          horizontalAlignment: 'center',
+          verticalAlignment: 'middle',
+          xoffset: 0,
+          yoffset: 0
+        }
+
+    symbol.type = 'text'
+    symbol.text = text
+    if (!symbol.font) {
+      symbol.font = {
+        family: 'Avenir Next W00',
+        size: 11,
+        weight: 'normal'
+      }
+    }
+    if (!symbol.color) symbol.color = [255, 255, 255, 1]
+    if (!symbol.haloColor) symbol.haloColor = [0, 0, 0, 0.9]
+    if (symbol.haloSize == null) symbol.haloSize = 1.5
+    if (!symbol.horizontalAlignment) symbol.horizontalAlignment = 'center'
+    if (!symbol.verticalAlignment) symbol.verticalAlignment = 'middle'
+    return symbol
   }
 
   const polylineMidPoint = (pts: XY[]) => {
@@ -385,6 +485,7 @@ export function useGeometry () {
   function _restartReshapeSession (sketchG: any) {
     reshapeSketchGraphicRef.current = sketchG
     applyUpdateSketchSymbol(sketchG, reshapeLayerRef.current?.geometryType)
+    syncLiveAreaLabel(sketchG?.geometry, reshapeLayerRef.current)
     applySnappingForLayer(reshapeLayerRef.current)
     refreshUpdateDraftGraphic(sketchG)
     svmRef.current?.update([sketchG], {
@@ -402,6 +503,47 @@ export function useGeometry () {
     if (!gl || !draft) return
     try { gl.removeAll?.() } catch {}
     try { gl.add?.(draft) } catch {}
+  }, [])
+
+  const syncLiveAreaLabel = useCallback((geometry: any, layer: any) => {
+    const labelLayer = liveLabelLayerRef.current
+    if (!labelLayer) return
+
+    if (!geometry || layer?.geometryType !== 'polygon') {
+      try {
+        if (liveLabelGraphicRef.current) labelLayer.remove?.(liveLabelGraphicRef.current)
+      } catch {}
+      liveLabelGraphicRef.current = null
+      return
+    }
+
+    const hectares = getAreaHectares(geometry)
+    const point = getPolygonLabelPoint(geometry)
+    if (hectares == null || !point) {
+      try {
+        if (liveLabelGraphicRef.current) labelLayer.remove?.(liveLabelGraphicRef.current)
+      } catch {}
+      liveLabelGraphicRef.current = null
+      return
+    }
+
+    const text = hectares.toFixed(2)
+    const symbol = buildLiveAreaLabelSymbol(layer, text)
+
+    if (liveLabelGraphicRef.current) {
+      try {
+        liveLabelGraphicRef.current.geometry = point
+        liveLabelGraphicRef.current.symbol = symbol
+      } catch {}
+      return
+    }
+
+    const graphic = new Graphic({
+      geometry: point,
+      symbol
+    } as any)
+    liveLabelGraphicRef.current = graphic
+    try { labelLayer.add?.(graphic) } catch {}
   }, [])
 
   const applySnappingForLayer = useCallback((layer: any) => {
@@ -423,6 +565,7 @@ export function useGeometry () {
 
     refreshUpdateDraftGraphic(draft)
     applyUpdateSketchSymbol(draft, updateLayerRef.current?.geometryType)
+    syncLiveAreaLabel(draft.geometry, updateLayerRef.current)
     applySnappingForLayer(updateLayerRef.current)
 
     if (allowMove) {
@@ -444,13 +587,16 @@ export function useGeometry () {
       enableScaling: false,
       preserveAspectRatio: false
     } as any)
-  }, [applySnappingForLayer, refreshUpdateDraftGraphic])
+  }, [applySnappingForLayer, refreshUpdateDraftGraphic, syncLiveAreaLabel])
 
   const setupOnView = useCallback((view: MapView) => {
     viewRef.current = view
     const gl = new GraphicsLayer({ listMode: 'hide' }) as any
+    const liveLabelLayer = new GraphicsLayer({ listMode: 'hide' }) as any
     ;(view as any).map.add(gl)
+    ;(view as any).map.add(liveLabelLayer)
     glRef.current = gl
+    liveLabelLayerRef.current = liveLabelLayer
 
     const svm = new SketchViewModel({
       view: view as any,
@@ -477,6 +623,7 @@ export function useGeometry () {
     svm.on('create', async (ev: any) => {
       if (ev.state === 'cancel') {
         try { gl.removeAll() } catch {}
+        _clearLiveAreaLabel()
         _clearCreate()
         _clearReshapeLine()
         splitItemRef.current = null
@@ -485,11 +632,16 @@ export function useGeometry () {
         return
       }
 
+      if (sketchModeRef.current === 'creating') {
+        syncLiveAreaLabel(ev?.graphic?.geometry, createLayerRef.current)
+      }
+
       if (ev.state !== 'complete') return
 
       const sketchGraphic = ev.graphic
       if (!sketchGraphic?.geometry) {
         try { gl.removeAll() } catch {}
+        _clearLiveAreaLabel()
         _clearCreate()
         _clearReshapeLine()
         splitItemRef.current = null
@@ -569,6 +721,7 @@ export function useGeometry () {
           reshapeReadyRef.current = true
           reshapeSketchGraphicRef.current = sketchGraphic
           applyUpdateSketchSymbol(sketchGraphic, (lyr as any)?.geometryType)
+          syncLiveAreaLabel(sketchGraphic.geometry, lyr)
           applySnappingForLayer(lyr)
           refreshUpdateDraftGraphic(sketchGraphic)
           svm.update([sketchGraphic], {
@@ -818,6 +971,7 @@ export function useGeometry () {
         if (evGraphic) updateSketchGraphicRef.current = evGraphic
         const draft = updateSketchGraphicRef.current
         applyUpdateSketchSymbol(draft, updateLayerRef.current?.geometryType)
+        syncLiveAreaLabel(draft?.geometry, updateLayerRef.current)
 
         if (
           updateLayerRef.current?.geometryType === 'polygon' &&
@@ -861,6 +1015,7 @@ export function useGeometry () {
               enableScaling: false,
               preserveAspectRatio: false
             } as any)
+            syncLiveAreaLabel(freshDraft.geometry, updateLayerRef.current)
           }, 50)
           return
         }
@@ -869,6 +1024,13 @@ export function useGeometry () {
       }
 
       if (sketchModeRef.current !== 'reshaping') return
+
+      const reshapeEvGraphic = ev.graphics?.[0]
+      if (reshapeEvGraphic) {
+        reshapeSketchGraphicRef.current = reshapeEvGraphic
+        applyUpdateSketchSymbol(reshapeEvGraphic, reshapeLayerRef.current?.geometryType)
+        syncLiveAreaLabel(reshapeEvGraphic.geometry, reshapeLayerRef.current)
+      }
 
       if (ev.toolEventInfo && String(ev.toolEventInfo.type).includes('move')) {
         try { svm.cancel() } catch {}
@@ -905,6 +1067,7 @@ export function useGeometry () {
               enableScaling: false,
               preserveAspectRatio: false
             } as any)
+            syncLiveAreaLabel(freshG.geometry, reshapeLayerRef.current)
           }, 50)
         } else {
           try { gl.removeAll() } catch {}
@@ -925,7 +1088,10 @@ export function useGeometry () {
       svmRef.current = null
 
       try { (view as any).map.remove(gl) } catch {}
+      try { (view as any).map.remove(liveLabelLayer) } catch {}
       glRef.current = null
+      liveLabelLayerRef.current = null
+      liveLabelGraphicRef.current = null
 
       _clearCreate()
       _clearReshape()
@@ -1105,9 +1271,18 @@ export function useGeometry () {
 
     try {
       updateSourceGraphicRef.current = src
+      const v = viewRef.current as any
+      if (layer.geometryType === 'polygon' && v?.whenLayerView) {
+        v.whenLayerView(layer).then((lv: any) => {
+          if (lv && typeof lv.filter !== 'undefined') {
+            updateLayerViewRef.current = lv
+            lv.filter = { where: `${oidField} <> ${oid}` } as any
+          }
+        }).catch(() => {})
+      }
       // Hide via layerView.filter — compatible with JSAPI 4.15+
-      // Keep the source feature visible so portal/web map labels stay available
-      // while the editable draft graphic is shown in the temp sketch layer.
+      // Show a live overlay area label from the editable draft geometry
+      // while the saved source feature stays hidden in the layer view.
     } catch {}
 
     applyUpdateSketchSymbol(draft, layer.geometryType)
@@ -1121,9 +1296,10 @@ export function useGeometry () {
     updateBlockedMoveGeometryRef.current = null
     updateCbRef.current = onDone || null
 
+    syncLiveAreaLabel(draft.geometry, layer)
     _setMode('updating')
     restartUpdateSession(draft, !!updateAllowMoveRef.current)
-  }, [restartUpdateSession])
+  }, [restartUpdateSession, syncLiveAreaLabel])
 
   const commitUpdate = useCallback(async (draftAttrs: Record<string, any> = {}) => {
     const gl = glRef.current
