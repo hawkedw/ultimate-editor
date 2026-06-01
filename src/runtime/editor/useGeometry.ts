@@ -1106,15 +1106,8 @@ export function useGeometry () {
     try {
       updateSourceGraphicRef.current = src
       // Hide via layerView.filter — compatible with JSAPI 4.15+
-      const v = viewRef.current as any
-      if (v?.whenLayerView) {
-        v.whenLayerView(layer).then((lv: any) => {
-          if (lv && typeof lv.filter !== 'undefined') {
-            updateLayerViewRef.current = lv
-            lv.filter = { where: `${oidField} <> ${oid}` } as any
-          }
-        }).catch(() => {})
-      }
+      // Keep the source feature visible so portal/web map labels stay available
+      // while the editable draft graphic is shown in the temp sketch layer.
     } catch {}
 
     applyUpdateSketchSymbol(draft, layer.geometryType)
