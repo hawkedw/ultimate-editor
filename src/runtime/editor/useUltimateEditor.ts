@@ -7,7 +7,9 @@ import type FeatureLayer from 'esri/layers/FeatureLayer'
 import GraphicsLayer from 'esri/layers/GraphicsLayer'
 import Graphic from 'esri/Graphic'
 import Extent from 'esri/geometry/Extent'
+import Polyline from 'esri/geometry/Polyline'
 import * as geometryEngine from 'esri/geometry/geometryEngine'
+import type { DivideSettings } from '../components/DividePanel'
 
 import { useSelection } from './useSelection'
 import { useGeometry } from './useGeometry'
@@ -18,8 +20,9 @@ import {
   restorePopups,
   type PopupViewState
 } from './popupManager'
-import { fetchFullGraphic, replaceFeatureSet } from './featureEdits'
+import { fetchFullGraphic, queryGraphicsByOids, replaceFeatureSet, sanitizeAttrsForAdd } from './featureEdits'
 import { makeHistoryEntry } from './history'
+import { buildDivideGeometries, parseDivideNumber, type DivideDirection } from './divideGeometry'
 
 import {
   isFeatureLayer,
@@ -30,6 +33,7 @@ import {
 } from '../utils/ueUtils'
 
 export type Tool = 'none' | 'add' | 'remove' | 'split' | 'reshape'
+type DivideDirectionTool = 'pick-edge' | 'draw-line' | null
 
 export interface FieldPolicy {
   hidden: Set<string>
@@ -46,6 +50,12 @@ function toPlainFields (raw: any): FieldSetting[] {
 }
 
 const MAX_HISTORY = 10
+const DEFAULT_DIVIDE_SETTINGS: DivideSettings = {
+  method: 'proportional',
+  azimuth: '',
+  plotCount: '',
+  plotArea: ''
+}
 
 function setMapCursor (view: any, cursor: string) {
   try {
@@ -110,6 +120,109 @@ function mergePreviewSymbol () {
   } as any
 }
 
+function dividePreviewPolygonSymbol () {
+  return {
+    type: 'simple-fill',
+    style: 'solid',
+    color: [77, 163, 255, 0.08],
+    outline: { color: [77, 163, 255, 0.9], width: 1.5, style: 'solid' }
+  } as any
+}
+
+function divideDirectionSymbol () {
+  return { type: 'simple-line', color: [255, 196, 0, 1], width: 2.25, style: 'solid' } as any
+}
+
+function divideArrowSymbol () {
+  return { type: 'simple-line', color: [255, 255, 255, 1], width: 2.5, style: 'solid' } as any
+}
+
+function dividePreviewPartSymbol () {
+  return {
+    type: 'simple-fill',
+    style: 'none',
+    color: [0, 0, 0, 0],
+    outline: { color: [255, 255, 255, 0.92], width: 1.5, style: 'dash' }
+  } as any
+}
+
+function toPointXY (p: any) {
+  return Array.isArray(p) ? { x: Number(p[0]), y: Number(p[1]) } : { x: Number(p?.x), y: Number(p?.y) }
+}
+
+function distPointToSegment2 (p: any, a: any, b: any) {
+  const vx = b.x - a.x
+  const vy = b.y - a.y
+  const wx = p.x - a.x
+  const wy = p.y - a.y
+  const len2 = vx * vx + vy * vy
+  const t = len2 > 0 ? Math.max(0, Math.min(1, (wx * vx + wy * vy) / len2)) : 0
+  const x = a.x + vx * t
+  const y = a.y + vy * t
+  const dx = p.x - x
+  const dy = p.y - y
+  return dx * dx + dy * dy
+}
+
+function findNearestSegment (geometry: any, mapPoint: any) {
+  const paths = geometry?.paths || geometry?.rings || []
+  let best: any = null
+  const p = toPointXY(mapPoint)
+
+  for (const path of paths) {
+    for (let i = 0; i < path.length - 1; i++) {
+      const a = toPointXY(path[i])
+      const b = toPointXY(path[i + 1])
+      if (!Number.isFinite(a.x + a.y + b.x + b.y)) continue
+      const d2 = distPointToSegment2(p, a, b)
+      if (!best || d2 < best.d2) {
+        best = {
+          d2,
+          start: { x: a.x, y: a.y, spatialReference: geometry.spatialReference },
+          end: { x: b.x, y: b.y, spatialReference: geometry.spatialReference }
+        }
+      }
+    }
+  }
+
+  return best
+}
+
+function lineGeometry (start: any, end: any, spatialReference: any) {
+  return new Polyline({
+    paths: [[[start.x, start.y], [end.x, end.y]]],
+    spatialReference
+  } as any)
+}
+
+function buildArrowGeometry (start: any, end: any, reversed: boolean, spatialReference: any, view: any) {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const len = Math.sqrt(dx * dx + dy * dy)
+  if (!Number.isFinite(len) || len <= 0) return null
+  const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
+  const sign = reversed ? -1 : 1
+  const nx = (-dy / len) * sign
+  const ny = (dx / len) * sign
+  const arrowLen = Math.max(len * 0.35, Number(view?.extent?.width || 0) * 0.035)
+  const headLen = arrowLen * 0.22
+  const headWidth = arrowLen * 0.12
+  const tip = { x: mid.x + nx * arrowLen, y: mid.y + ny * arrowLen }
+  const base = { x: mid.x, y: mid.y }
+  const tx = dx / len
+  const ty = dy / len
+  const left = { x: tip.x - nx * headLen + tx * headWidth, y: tip.y - ny * headLen + ty * headWidth }
+  const right = { x: tip.x - nx * headLen - tx * headWidth, y: tip.y - ny * headLen - ty * headWidth }
+
+  return new Polyline({
+    paths: [
+      [[base.x, base.y], [tip.x, tip.y]],
+      [[left.x, left.y], [tip.x, tip.y], [right.x, right.y]]
+    ],
+    spatialReference
+  } as any)
+}
+
 export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const cfg = props.config
   const cfgRef = React.useRef(cfg)
@@ -122,6 +235,22 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   React.useEffect(() => { toolRef.current = tool }, [tool])
 
   const [mergeMode, setMergeMode] = React.useState(false)
+  const [divideMode, setDivideMode] = React.useState(false)
+  const [divideDirectionTool, setDivideDirectionTool] = React.useState<DivideDirectionTool>(null)
+  const [divideDirection, setDivideDirection] = React.useState<DivideDirection | null>(null)
+  const [divideSettings, setDivideSettings] = React.useState<DivideSettings>(DEFAULT_DIVIDE_SETTINGS)
+  const [divideReversed, setDivideReversed] = React.useState(false)
+  const divideModeRef = React.useRef(false)
+  const divideDirectionToolRef = React.useRef<DivideDirectionTool>(null)
+  const divideDirectionRef = React.useRef<DivideDirection | null>(null)
+  const divideSettingsRef = React.useRef<DivideSettings>(DEFAULT_DIVIDE_SETTINGS)
+  const divideReversedRef = React.useRef(false)
+
+  React.useEffect(() => { divideModeRef.current = divideMode }, [divideMode])
+  React.useEffect(() => { divideDirectionToolRef.current = divideDirectionTool }, [divideDirectionTool])
+  React.useEffect(() => { divideDirectionRef.current = divideDirection }, [divideDirection])
+  React.useEffect(() => { divideSettingsRef.current = divideSettings }, [divideSettings])
+  React.useEffect(() => { divideReversedRef.current = divideReversed }, [divideReversed])
 
   const selection = useSelection(toolRef as any, { cfgRef })
   const geometry = useGeometry()
@@ -150,9 +279,13 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   const mergePreviewLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
   const mergePreviewGraphicRef = React.useRef<__esri.Graphic | null>(null)
+  const dividePreviewLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
+  const divideDrawStartRef = React.useRef<any>(null)
   const popupStateRef = React.useRef<PopupViewState | null>(null)
 
   const sel = selection.selectedItems || []
+  const selRef = React.useRef<any[]>([])
+  React.useEffect(() => { selRef.current = sel }, [sel])
 
   const selectedLayer = sel.length > 0 ? sel[0].layer : null
   const sameLayerSelected = sel.length > 0 && sel.every((s) => layerKey(s.layer) === layerKey(sel[0].layer))
@@ -168,6 +301,75 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   function clearMergePreview () {
     try { mergePreviewLayerRef.current?.removeAll?.() } catch {}
     mergePreviewGraphicRef.current = null
+  }
+
+  function ensureDividePreviewLayer (v: any) {
+    if (dividePreviewLayerRef.current) return
+    const gl = new GraphicsLayer({ listMode: 'hide' } as any)
+    v.map.add(gl)
+    dividePreviewLayerRef.current = gl
+  }
+
+  function clearDividePreview () {
+    try { dividePreviewLayerRef.current?.removeAll?.() } catch {}
+  }
+
+  function updateDividePreview (
+    direction = divideDirectionRef.current,
+    settings = divideSettingsRef.current
+  ) {
+    const v = viewRef.current
+    if (!v || !divideModeRef.current) return
+    ensureDividePreviewLayer(v)
+    clearDividePreview()
+
+    const polygon = selRef.current[0]?.graphic?.geometry
+    let previewDirection = direction
+    if (polygon) {
+      dividePreviewLayerRef.current?.add(new Graphic({
+        geometry: polygon,
+        symbol: dividePreviewPolygonSymbol()
+      } as any))
+
+      const result = buildDivideGeometries(polygon, settings, direction, divideReversedRef.current)
+      previewDirection = result.direction || direction
+      for (const geometry of result.geometries) {
+        dividePreviewLayerRef.current?.add(new Graphic({
+          geometry,
+          symbol: dividePreviewPartSymbol()
+        } as any))
+      }
+    }
+
+    if (!previewDirection?.start || !previewDirection?.end) return
+    const sr = previewDirection.start.spatialReference || previewDirection.end.spatialReference || v.spatialReference
+    const line = lineGeometry(previewDirection.start, previewDirection.end, sr)
+    const arrow = buildArrowGeometry(previewDirection.start, previewDirection.end, previewDirection.reversed, sr, v)
+    dividePreviewLayerRef.current?.add(new Graphic({ geometry: line, symbol: divideDirectionSymbol() } as any))
+    if (arrow) dividePreviewLayerRef.current?.add(new Graphic({ geometry: arrow, symbol: divideArrowSymbol() } as any))
+  }
+
+  function setDivideDirectionAndPreview (direction: DivideDirection | null) {
+    divideDirectionRef.current = direction
+    setDivideDirection(direction)
+    if (direction) {
+      divideReversedRef.current = !!direction.reversed
+      setDivideReversed(!!direction.reversed)
+    }
+    updateDividePreview(direction)
+  }
+
+  function exitDivideMode () {
+    setDivideMode(false)
+    divideModeRef.current = false
+    setDivideDirectionTool(null)
+    divideDirectionToolRef.current = null
+    setDivideDirectionAndPreview(null)
+    setDivideReversed(false)
+    divideReversedRef.current = false
+    clearDividePreview()
+    divideDrawStartRef.current = null
+    setMapCursor(viewRef.current, 'default')
   }
 
   async function previewMergeItem (oid: number | null) {
@@ -198,9 +400,12 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const canSplit = !!activeSplitLayer
   const canReshape = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
   const canMerge = !!layerRule?.allowGeomUpdate && sel.length >= 2 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
+  const canDivide = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
   const canGeom = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected
   const canUndo = !historyBusy && undoStack.length > 0
   const canRedo = !historyBusy && redoStack.length > 0
+  const divideAzimuth = parseDivideNumber(divideSettings.azimuth)
+  const divideDirectionReady = !!divideDirection || (divideAzimuth != null && Number.isFinite(divideAzimuth) && divideAzimuth >= 0 && divideAzimuth < 360)
 
   React.useEffect(() => {
     if (!canMerge && mergeMode) { setMergeMode(false); clearMergePreview() }
@@ -208,6 +413,10 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   React.useEffect(() => { if (!mergeMode) clearMergePreview() }, [mergeMode])
   React.useEffect(() => { if (!mergeMode) return; clearMergePreview() }, [sel, mergeMode])
+  React.useEffect(() => {
+    if (divideMode && !canDivide) exitDivideMode()
+    if (divideMode && canDivide) updateDividePreview()
+  }, [divideMode, canDivide, sel])
 
   React.useEffect(() => {
     if (sel.length === 1 && canGeom) return
@@ -347,6 +556,35 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
         geometry.sketchModeRef.current === 'updating'
       ) return
       if (isBoxDraggingRef.current) return
+      if (divideModeRef.current && divideDirectionToolRef.current === 'pick-edge') {
+        try { ev.stopPropagation?.() } catch {}
+        try { v.popup?.close?.() } catch {}
+        const ht = await v.hitTest(ev)
+        const mapPoint = v.toMap({ x: ev.x, y: ev.y })
+        let best: any = null
+        for (const r of ((ht?.results || []) as any[])) {
+          const g = r?.graphic
+          if (!isFeatureLayer(g?.layer)) continue
+          if (g.layer === dividePreviewLayerRef.current || g.layer === boxLayerRef.current || g.layer === mergePreviewLayerRef.current) continue
+          const geom = g?.geometry
+          const type = geom?.type
+          if (type !== 'polygon' && type !== 'polyline') continue
+          const seg = findNearestSegment(geom, mapPoint)
+          if (seg && (!best || seg.d2 < best.d2)) best = seg
+        }
+        if (best) {
+          setDivideDirectionAndPreview({ start: best.start, end: best.end, reversed: divideReversedRef.current })
+          setDivideDirectionTool(null)
+          divideDirectionToolRef.current = null
+          setMapCursor(viewRef.current, 'default')
+        }
+        return
+      }
+      if (divideModeRef.current) {
+        try { ev.stopPropagation?.() } catch {}
+        try { v.popup?.close?.() } catch {}
+        return
+      }
       if (mergeMode) return
       try { v.popup?.close?.() } catch {}
 
@@ -411,6 +649,35 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
     const hDrag = v.on('drag', async (e: any) => {
       if (geometry.sketchModeRef.current !== 'idle') return
+      if (divideModeRef.current && divideDirectionToolRef.current === 'draw-line') {
+        if (e.action === 'start') {
+          divideDrawStartRef.current = v.toMap({ x: e.x, y: e.y })
+          e.stopPropagation()
+          return
+        }
+
+        if (e.action === 'update') {
+          const start = divideDrawStartRef.current
+          const end = v.toMap({ x: e.x, y: e.y })
+          if (!start || !end) return
+          e.stopPropagation()
+          updateDividePreview({ start, end, reversed: divideReversedRef.current })
+          return
+        }
+
+        if (e.action === 'end') {
+          const start = divideDrawStartRef.current
+          const end = v.toMap({ x: e.x, y: e.y })
+          divideDrawStartRef.current = null
+          e.stopPropagation()
+          if (!start || !end) return
+          setDivideDirectionAndPreview({ start, end, reversed: divideReversedRef.current })
+          setDivideDirectionTool(null)
+          divideDirectionToolRef.current = null
+          setMapCursor(viewRef.current, 'default')
+          return
+        }
+      }
       if (mergeMode) return
       const t = toolRef.current
       if (t !== 'add' && t !== 'remove') return
@@ -473,6 +740,10 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       try { mergePreviewLayerRef.current?.destroy?.() } catch {}
       mergePreviewLayerRef.current = null
       mergePreviewGraphicRef.current = null
+      try { if (dividePreviewLayerRef.current) v.map.remove(dividePreviewLayerRef.current) } catch {}
+      try { dividePreviewLayerRef.current?.destroy?.() } catch {}
+      dividePreviewLayerRef.current = null
+      divideDrawStartRef.current = null
       dragStartRef.current = null
       isBoxDraggingRef.current = false
       setMapCursor(v, 'default')
@@ -497,6 +768,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       try { selection.clearSelection() } catch {}
     }
     clearMergePreview()
+    if (divideMode) exitDivideMode()
     if (mergeMode) setMergeMode(false)
     if (toolRef.current !== 'none') setTool('none')
     if (geomChecked) setGeomChecked(false)
@@ -537,6 +809,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     geometry.cancel()
     selection.clearSelection()
     clearMergePreview()
+    exitDivideMode()
     setMergeMode(false)
     setTool('none')
     setGeomChecked(false)
@@ -579,18 +852,21 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   const onToggleAdd = React.useCallback(() => {
     if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
+    exitDivideMode()
     setGeomChecked(false); setMergeMode(false)
     setTool(prev => { const next = prev === 'add' ? 'none' : 'add'; setMapCursor(viewRef.current, next === 'none' ? 'default' : 'crosshair'); return next })
   }, [geometry])
 
   const onToggleRemove = React.useCallback(() => {
     if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
+    exitDivideMode()
     setGeomChecked(false); setMergeMode(false)
     setTool(prev => { const next = prev === 'remove' ? 'none' : 'remove'; setMapCursor(viewRef.current, next === 'none' ? 'default' : 'crosshair'); return next })
   }, [geometry])
 
   const startReshapeSession = React.useCallback((itemOrLayer: any) => {
     if (!itemOrLayer?.layer) return
+    exitDivideMode()
     setGeomChecked(false); setMergeMode(false); clearMergePreview(); setTool('reshape'); setMapCursor(viewRef.current, 'default')
     geometry.startReshapeByLine(itemOrLayer as any, async (result: any) => {
       const beforeGs = result?.before || []
@@ -610,6 +886,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   }, [tool, geometry, selection, sel, sameLayerSelected, startReshapeSession])
 
   const onToggleSplit = React.useCallback(() => {
+    exitDivideMode()
     setGeomChecked(false); setMergeMode(false); clearMergePreview()
     if (tool === 'split') { geometry.cancel(); setTool('none'); setMapCursor(viewRef.current, 'default'); return }
     const splitLayer = getTopSplittableLayer(viewRef.current)
@@ -627,6 +904,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const onStartMerge = React.useCallback(() => {
     if (!canMerge) return
     if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
+    exitDivideMode()
     setGeomChecked(false); setTool('none'); setMapCursor(viewRef.current, 'default'); setMergeMode(true)
   }, [canMerge, geometry])
 
@@ -676,14 +954,130 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     } catch (e) { console.error('[UE] merge applyEdits error', e) }
   }, [canMerge, sameLayerSelected, selectedLayer, sel, selection, pushHistory])
 
+  const onStartDivide = React.useCallback(() => {
+    if (!canDivide) return
+    if (geometry.sketchModeRef.current === 'updating') geometry.cancel()
+    clearMergePreview()
+    setMergeMode(false)
+    setGeomChecked(false)
+    setTool('none')
+    setDivideMode(true)
+    divideModeRef.current = true
+    setDivideSettings(DEFAULT_DIVIDE_SETTINGS)
+    divideSettingsRef.current = DEFAULT_DIVIDE_SETTINGS
+    setDivideReversed(false)
+    divideReversedRef.current = false
+    setDivideDirectionTool(null)
+    divideDirectionToolRef.current = null
+    setDivideDirectionAndPreview(null)
+    setMapCursor(viewRef.current, 'default')
+    updateDividePreview(null)
+  }, [canDivide, geometry])
+
+  const onCancelDivide = React.useCallback(() => {
+    exitDivideMode()
+  }, [])
+
+  const onDividePickEdge = React.useCallback(() => {
+    if (!divideModeRef.current) return
+    const active = divideDirectionToolRef.current === 'pick-edge'
+    const next: DivideDirectionTool = active ? null : 'pick-edge'
+    setDivideDirectionTool(next)
+    divideDirectionToolRef.current = next
+    setMapCursor(viewRef.current, next ? 'crosshair' : 'default')
+  }, [])
+
+  const onDivideDrawDirection = React.useCallback(() => {
+    if (!divideModeRef.current) return
+    const active = divideDirectionToolRef.current === 'draw-line'
+    const next: DivideDirectionTool = active ? null : 'draw-line'
+    setDivideDirectionTool(next)
+    divideDirectionToolRef.current = next
+    divideDrawStartRef.current = null
+    setMapCursor(viewRef.current, next ? 'crosshair' : 'default')
+  }, [])
+
+  const onDivideSwitchDirection = React.useCallback(() => {
+    const reversed = !divideReversedRef.current
+    divideReversedRef.current = reversed
+    setDivideReversed(reversed)
+    const current = divideDirectionRef.current
+    if (current) setDivideDirectionAndPreview({ ...current, reversed })
+    else updateDividePreview(null, divideSettingsRef.current)
+  }, [])
+
+  const onDivideSettingsChange = React.useCallback((settings: DivideSettings) => {
+    setDivideSettings(settings)
+    divideSettingsRef.current = settings
+    updateDividePreview(divideDirectionRef.current, settings)
+  }, [])
+
+  const onConfirmDivide = React.useCallback(async (settings: DivideSettings) => {
+    divideSettingsRef.current = settings
+    setDivideDirectionTool(null)
+    divideDirectionToolRef.current = null
+    setMapCursor(viewRef.current, 'default')
+
+    const item = selRef.current[0]
+    const layer = item?.layer as any
+    const sourceGraphic = item?.graphic as any
+    const oid = item?.oid
+    const polygon = sourceGraphic?.geometry
+    if (!item || !layer || oid == null || polygon?.type !== 'polygon') return
+
+    const result = buildDivideGeometries(polygon, settings, divideDirectionRef.current, divideReversedRef.current)
+    if (!result.geometries || result.geometries.length < 2) {
+      updateDividePreview(divideDirectionRef.current, settings)
+      return
+    }
+
+    const oidField = layer.objectIdField || 'OBJECTID'
+    const beforeGraphic = sourceGraphic?.clone ? sourceGraphic.clone() : sourceGraphic
+    const baseAttrs = sourceGraphic?.attributes || {}
+    const updateFeature = {
+      geometry: result.geometries[0],
+      attributes: { [oidField]: oid }
+    }
+    const addFeatures = result.geometries.slice(1).map((geometry: any) => ({
+      geometry,
+      attributes: sanitizeAttrsForAdd(layer, baseAttrs)
+    }))
+
+    try {
+      const res = await layer.applyEdits({
+        updateFeatures: [updateFeature],
+        addFeatures
+      } as any)
+      const addedOids = (res?.addFeatureResults || [])
+        .map((r: any) => r.objectId)
+        .filter((o: any) => o != null)
+      const afterGraphics = await queryGraphicsByOids(layer, [oid, ...addedOids])
+
+      if (beforeGraphic && afterGraphics.length) {
+        pushHistory(makeHistoryEntry(layer, [beforeGraphic], afterGraphics, 'divide'))
+      }
+
+      exitDivideMode()
+      selection.clearSelection()
+      for (let i = 0; i < afterGraphics.length; i++) {
+        await selection.selectGraphic(afterGraphics[i], i === 0 ? 'replace' : 'add')
+      }
+    } catch (e) {
+      console.error('[UE] divide applyEdits error', e)
+      updateDividePreview(divideDirectionRef.current, settings)
+    }
+  }, [pushHistory, selection])
+
   const onGeomToggle = React.useCallback(() => {
     if (!canGeom || sel.length !== 1) return
     if (geomChecked) { if (geometry.sketchModeRef.current === 'updating') geometry.cancel(); setGeomChecked(false); return }
+    exitDivideMode()
     setTool('none'); setMergeMode(false); clearMergePreview(); setMapCursor(viewRef.current, 'default'); setGeomChecked(true)
     geometry.startGeometryEdit(sel[0] as any)
   }, [canGeom, sel, geomChecked, geometry])
 
   const onStartCreate = React.useCallback((layer: FeatureLayer, template: any) => {
+    exitDivideMode()
     setMergeMode(false); setGeomChecked(false); setTool('none'); clearMergePreview(); setMapCursor(viewRef.current, 'crosshair')
     const rule = resolveRuleEffective(cfgRef.current, layer)
     const staticAttrs = applyDefaultValues(rule)
@@ -744,7 +1138,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   }, [geometry, selection, tool])
 
   const clearSelection = React.useCallback(() => {
-    geometry.cancel(); selection.clearSelection(); clearMergePreview(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
+    geometry.cancel(); selection.clearSelection(); clearMergePreview(); exitDivideMode(); setMergeMode(false); setTool('none'); setGeomChecked(false); setMapCursor(viewRef.current, 'default')
   }, [geometry, selection])
 
   const onConfirmDelete = React.useCallback(async (scope: 'single' | 'multi') => {
@@ -815,10 +1209,12 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   return {
     mapWidgetId, onActiveViewChange, cfg, view,
-    selectedItems: sel, tool, mergeMode, geomChecked, sketchMode: geometry.sketchMode,
+    selectedItems: sel, tool, mergeMode, divideMode, divideDirectionTool,
+    divideDirectionReady, geomChecked, sketchMode: geometry.sketchMode,
     editableLayers, attrEditableLayers, showSplitButton,
-    canSplit, canReshape, canMerge, canGeom, canUndo, canRedo,
+    canSplit, canReshape, canMerge, canDivide, canGeom, canUndo, canRedo,
     onToggleAdd, onToggleRemove, onToggleSplit, onToggleReshape, onUndo, onRedo, onGeomToggle,
+    onStartDivide, onCancelDivide, onDividePickEdge, onDivideDrawDirection, onDivideSwitchDirection, onDivideSettingsChange, onConfirmDivide,
     onStartMerge, onCancelMerge, onConfirmMerge, onPreviewMergeItem,
     onStartCreate, onSaveNew, onCancelNew, onSaveExisting, onCancelEdit, onCancelSketch,
     onConfirmDelete, clearSelection, getFieldPolicy

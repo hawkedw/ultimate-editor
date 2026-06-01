@@ -8,6 +8,7 @@ interface Props {
   showSplitButton: boolean
   canSplit: boolean
   canMerge: boolean
+  canDivide: boolean
   canGeom: boolean
   geomChecked: boolean
   sketchMode: string
@@ -20,6 +21,7 @@ interface Props {
   onUndo: () => void
   onRedo: () => void
   onGeomToggle: () => void
+  onStartDivide: () => void
   onStartMerge: () => void
   onClear: () => void
 }
@@ -33,6 +35,7 @@ const Toolbar = ({
   showSplitButton,
   canSplit,
   canMerge,
+  canDivide,
   canGeom,
   geomChecked,
   sketchMode,
@@ -45,6 +48,7 @@ const Toolbar = ({
   onUndo,
   onRedo,
   onGeomToggle,
+  onStartDivide,
   onStartMerge,
   onClear
 }: Props) => (
@@ -153,6 +157,17 @@ const Toolbar = ({
         onClick={onStartMerge}
       >
         Объединить
+      </button>
+    )}
+
+    {!mergeMode && canDivide && sketchMode === 'idle' && (
+      <button
+        type='button'
+        className='ue-tb-btn'
+        title='Разбить полигон на участки'
+        onClick={onStartDivide}
+      >
+        Разбить на участки
       </button>
     )}
   </div>

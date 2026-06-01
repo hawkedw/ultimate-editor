@@ -8,6 +8,7 @@ import IdlePanel from './components/IdlePanel'
 import FeatureFormPanel from './components/FeatureFormPanel'
 import BatchEditPanel from './components/BatchEditPanel'
 import MergePanel from './components/MergePanel'
+import DividePanel from './components/DividePanel'
 import Toolbar from './components/Toolbar'
 import ModeNoticePanel from './components/ModeNoticePanel'
 import { dlog, isDebugEnabled } from './debug'
@@ -92,6 +93,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
         showSplitButton={ue.showSplitButton}
         canSplit={ue.canSplit}
         canMerge={ue.canMerge}
+        canDivide={ue.canDivide}
         canGeom={ue.canGeom}
         geomChecked={ue.geomChecked}
         sketchMode={ue.sketchMode}
@@ -104,6 +106,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
         onUndo={ue.onUndo}
         onRedo={ue.onRedo}
         onGeomToggle={ue.onGeomToggle}
+        onStartDivide={ue.onStartDivide}
         onStartMerge={ue.onStartMerge}
         onClear={ue.clearSelection}
       />
@@ -147,7 +150,21 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
           />
         )}
 
-        {!ue.mergeMode && sel.length === 1 && (isIdle || ue.sketchMode === 'updating') && (
+        {ue.divideMode && sel.length === 1 && (
+          <DividePanel
+            layerTitle={(sel[0].layer as any)?.title || 'Объект'}
+            directionReady={ue.divideDirectionReady}
+            directionTool={ue.divideDirectionTool}
+            onPickEdge={ue.onDividePickEdge}
+            onDrawDirection={ue.onDivideDrawDirection}
+            onSwitchDirection={ue.onDivideSwitchDirection}
+            onCancel={ue.onCancelDivide}
+            onSettingsChange={ue.onDivideSettingsChange}
+            onDivide={ue.onConfirmDivide}
+          />
+        )}
+
+        {!ue.divideMode && !ue.mergeMode && sel.length === 1 && (isIdle || ue.sketchMode === 'updating') && (
           <FeatureFormPanel
             key={singleKey}
             item={sel[0]}

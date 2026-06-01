@@ -29,15 +29,17 @@ export async function fetchFullGraphic (layer: any, oid: number) {
   return fs?.features?.[0] ?? null
 }
 
-export async function queryGraphicsByOids (layer: any, oids: any[]) {
+export async function queryGraphicsByOids (layer: any, oids: any[]): Promise<any[]> {
   const valid = (oids || []).filter((o: any) => o != null)
   if (!valid.length) return []
+  const oidField = layer?.objectIdField || 'OBJECTID'
   const fs = await layer.queryFeatures({
     objectIds: valid,
     outFields: ['*'],
     returnGeometry: true
   } as any)
-  return fs?.features || []
+  const byOid = new Map<any, any>((fs?.features || []).map((g: any) => [g?.attributes?.[oidField], g]))
+  return valid.map((oid: any) => byOid.get(oid)).filter(Boolean)
 }
 
 export async function addBlueprints (layer: any, blueprints: any[]) {

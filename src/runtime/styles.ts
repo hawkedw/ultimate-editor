@@ -491,6 +491,96 @@ export const rootCss = css`
     margin-left: 6px;
   }
 
+  .ue-divide-panel .ue-form-body {
+    padding-right: 2px;
+  }
+
+  .ue-divide-section {
+    margin: 0 0 14px;
+  }
+
+  .ue-divide-label {
+    margin: 0 0 7px;
+    color: #dfe7f2;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .ue-divide-segments {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .ue-divide-segment {
+    appearance: none;
+    min-height: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 7px;
+    background: #1b1e25;
+    color: #e9edf4;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .ue-divide-segment:hover {
+    background: #222631;
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+
+  .ue-divide-segment--active {
+    background: #283241;
+    border-color: rgba(77, 163, 255, 0.58);
+    color: #fff;
+  }
+
+  .ue-divide-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0 0 14px;
+  }
+
+  .ue-divide-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: #eef1f5;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .ue-divide-field--wide {
+    grid-column: 1 / -1;
+  }
+
+  .ue-divide-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 8px;
+  }
+
+  .ue-divide-error {
+    margin: 0 0 12px;
+    padding: 9px 10px;
+    border: 1px solid rgba(220, 90, 90, 0.32);
+    border-radius: 8px;
+    background: rgba(80, 32, 38, 0.28);
+    color: #e8b4b6;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .ue-divide-footer {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
   .ue-form-host .esri-widget,
   .ue-form-host .esri-feature-form {
     background: transparent;
