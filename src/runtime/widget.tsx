@@ -117,6 +117,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
             key={idleKey}
             templateLayers={ue.editableLayers}
             showAttrHint={isIdle && ue.attrEditableLayers.length > 0}
+            showGroupPanHint={ue.tool === 'add' || ue.tool === 'remove'}
             isCreating={isCreating}
             onCancelCreate={ue.onCancelSketch}
             onSelectTemplate={ue.onStartCreate}

@@ -6,6 +6,7 @@ import { layerKey } from '../utils/ueUtils'
 interface Props {
   templateLayers: FeatureLayer[]
   showAttrHint: boolean
+  showGroupPanHint: boolean
   isCreating: boolean
   onCancelCreate: () => void
   onSelectTemplate: (layer: FeatureLayer, template: __esri.FeatureTemplate) => void
@@ -413,7 +414,7 @@ const ManualTemplateIcon = ({ info }: { info: SymbolInfo }) => {
 
 const TemplateIcon = ({ info }: { info: SymbolInfo }) => <ManualTemplateIcon info={info} />
 
-const IdlePanel = ({ templateLayers, showAttrHint, isCreating, onCancelCreate, onSelectTemplate }: Props) => {
+const IdlePanel = ({ templateLayers, showAttrHint, showGroupPanHint, isCreating, onCancelCreate, onSelectTemplate }: Props) => {
   const [items, setItems] = React.useState<TemplateItem[]>([])
 
   React.useEffect(() => {
@@ -442,6 +443,12 @@ const IdlePanel = ({ templateLayers, showAttrHint, isCreating, onCancelCreate, o
         </div>
       )}
 
+      {showGroupPanHint && !hasTemplates && (
+        <div className='ue-idle-hint'>
+          Зажмите ПКМ для перемещения карты
+        </div>
+      )}
+
       {hasTemplates && (
         <>
           {isCreating && (
@@ -459,6 +466,12 @@ const IdlePanel = ({ templateLayers, showAttrHint, isCreating, onCancelCreate, o
           <div className='ue-idle-hint'>
             Выберите шаблон для создания нового объекта
           </div>
+
+          {showGroupPanHint && (
+            <div className='ue-idle-hint'>
+              Зажмите ПКМ для перемещения карты
+            </div>
+          )}
 
           <div className='ue-template-groups'>
             {groups.map((group) => (

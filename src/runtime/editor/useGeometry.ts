@@ -32,6 +32,8 @@ export function useGeometry () {
   const glRef = useRef<any>(null)
   const liveLabelLayerRef = useRef<any>(null)
   const liveLabelGraphicRef = useRef<any>(null)
+  const liveLabelGeometryRef = useRef<any>(null)
+  const liveLabelSourceLayerRef = useRef<any>(null)
 
   const createLayerRef = useRef<any>(null)
   const createTemplateRef = useRef<any>(null)
@@ -87,6 +89,8 @@ export function useGeometry () {
       }
     } catch {}
     liveLabelGraphicRef.current = null
+    liveLabelGeometryRef.current = null
+    liveLabelSourceLayerRef.current = null
   }
 
   const _clearReshape = () => {
@@ -233,34 +237,119 @@ export function useGeometry () {
   const cloneSymbolLike = (symbol: any) => {
     if (!symbol) return null
     try {
-      if (typeof symbol.clone === 'function') return symbol.clone()
-    } catch {}
-    try {
-      if (typeof symbol.toJSON === 'function') return symbol.toJSON()
+      if (typeof symbol.toJSON === 'function') return JSON.parse(JSON.stringify(symbol.toJSON()))
     } catch {}
     try {
       return JSON.parse(JSON.stringify(symbol))
     } catch {}
+    try {
+      if (typeof symbol.clone === 'function') {
+        const cloned = symbol.clone()
+        if (cloned && typeof cloned.toJSON === 'function') return JSON.parse(JSON.stringify(cloned.toJSON()))
+      }
+    } catch {}
     return null
   }
 
-  const getPolygonLabelPoint = (polygon: any) => {
+  const extentToPolygon = (extent: any) => {
+    if (!extent) return null
+    try {
+      return new Polygon({
+        spatialReference: extent.spatialReference,
+        rings: [[
+          [extent.xmin, extent.ymin],
+          [extent.xmin, extent.ymax],
+          [extent.xmax, extent.ymax],
+          [extent.xmax, extent.ymin],
+          [extent.xmin, extent.ymin]
+        ]]
+      } as any)
+    } catch {}
+    return null
+  }
+
+  const pointInsidePolygon = (polygon: any, point: any) => {
+    if (!polygon || !point) return false
+    try {
+      return !!(geometryEngine as any).contains?.(polygon, point)
+    } catch {}
+    try {
+      return !!(geometryEngine as any).intersects?.(polygon, point)
+    } catch {}
+    return false
+  }
+
+  const pickViewportAwarePoint = (polygon: any, extent: any) => {
+    const sourceExtent = polygon?.extent || extent
+    if (!sourceExtent) return null
+    const candidates = [
+      { x: sourceExtent.center?.x, y: sourceExtent.ymax - (sourceExtent.height * 0.22) },
+      { x: sourceExtent.center?.x, y: sourceExtent.center?.y },
+      { x: sourceExtent.xmin + (sourceExtent.width * 0.35), y: sourceExtent.ymax - (sourceExtent.height * 0.26) },
+      { x: sourceExtent.xmax - (sourceExtent.width * 0.35), y: sourceExtent.ymax - (sourceExtent.height * 0.26) }
+    ]
+
+    for (const candidate of candidates) {
+      if (!Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue
+      try {
+        const point = new Point({
+          x: candidate.x,
+          y: candidate.y,
+          spatialReference: sourceExtent.spatialReference || polygon?.spatialReference
+        } as any)
+        if (pointInsidePolygon(polygon, point)) return point
+      } catch {}
+    }
+
+    return null
+  }
+
+  const getVisiblePolygonForLabel = (polygon: any, view: any) => {
+    if (!polygon || !view?.extent) return polygon
+    const visibleExtentPolygon = extentToPolygon(view.extent)
+    if (!visibleExtentPolygon) return polygon
+
+    try {
+      const clipped = (geometryEngine as any).intersect?.(polygon, visibleExtentPolygon)
+      if (clipped && polygonAreaAbs(clipped) > 0) return clipped
+    } catch {}
+
+    return polygon
+  }
+
+  const getPolygonLabelPoint = (polygon: any, view: any) => {
     if (!polygon) return null
+    const visiblePolygon = getVisiblePolygonForLabel(polygon, view)
+    const visibleExtent = visiblePolygon?.extent || polygon?.extent
+
+    const visibleCandidate = pickViewportAwarePoint(visiblePolygon, visibleExtent)
+    if (visibleCandidate) return visibleCandidate
+
+    try {
+      const centroid = visiblePolygon?.centroid
+      if (centroid && pointInsidePolygon(visiblePolygon, centroid)) return centroid.clone ? centroid.clone() : centroid
+    } catch {}
+
+    try {
+      const center = visibleExtent?.center
+      if (center) return center.clone ? center.clone() : center
+    } catch {}
+
     try {
       const c = polygon.centroid
       if (c) return c.clone ? c.clone() : c
     } catch {}
-    try {
-      const center = polygon.extent?.center
-      if (center) return center.clone ? center.clone() : center
-    } catch {}
+
     return null
   }
 
   const buildLiveAreaLabelSymbol = (layer: any, text: string) => {
     const baseSymbol = cloneSymbolLike(layer?.labelingInfo?.find((lc: any) => lc?.symbol)?.symbol)
     const symbol = baseSymbol && String(baseSymbol?.type || '').toLowerCase() === 'text'
-      ? baseSymbol
+      ? {
+          ...baseSymbol,
+          font: baseSymbol?.font ? { ...baseSymbol.font } : undefined
+        }
       : {
           type: 'text',
           color: [255, 255, 255, 1],
@@ -277,21 +366,21 @@ export function useGeometry () {
           yoffset: 0
         }
 
-    symbol.type = 'text'
-    symbol.text = text
-    if (!symbol.font) {
-      symbol.font = {
+    return {
+      ...symbol,
+      type: 'text',
+      text,
+      font: symbol.font || {
         family: 'Avenir Next W00',
         size: 11,
         weight: 'normal'
-      }
+      },
+      color: symbol.color || [255, 255, 255, 1],
+      haloColor: symbol.haloColor || [0, 0, 0, 0.9],
+      haloSize: symbol.haloSize == null ? 1.5 : symbol.haloSize,
+      horizontalAlignment: symbol.horizontalAlignment || 'center',
+      verticalAlignment: symbol.verticalAlignment || 'middle'
     }
-    if (!symbol.color) symbol.color = [255, 255, 255, 1]
-    if (!symbol.haloColor) symbol.haloColor = [0, 0, 0, 0.9]
-    if (symbol.haloSize == null) symbol.haloSize = 1.5
-    if (!symbol.horizontalAlignment) symbol.horizontalAlignment = 'center'
-    if (!symbol.verticalAlignment) symbol.verticalAlignment = 'middle'
-    return symbol
   }
 
   const polylineMidPoint = (pts: XY[]) => {
@@ -518,7 +607,7 @@ export function useGeometry () {
     }
 
     const hectares = getAreaHectares(geometry)
-    const point = getPolygonLabelPoint(geometry)
+    const point = getPolygonLabelPoint(geometry, viewRef.current)
     if (hectares == null || !point) {
       try {
         if (liveLabelGraphicRef.current) labelLayer.remove?.(liveLabelGraphicRef.current)
@@ -527,24 +616,38 @@ export function useGeometry () {
       return
     }
 
-    const text = hectares.toFixed(2)
-    const symbol = buildLiveAreaLabelSymbol(layer, text)
+      const text = hectares.toFixed(2)
+      if (liveLabelGraphicRef.current) {
+        try {
+          liveLabelGraphicRef.current.geometry = point
+        } catch {}
+        try {
+          const currentSymbol = liveLabelGraphicRef.current.symbol as any
+          const sameLayerStyle = liveLabelSourceLayerRef.current === layer
+          if (sameLayerStyle && currentSymbol && String(currentSymbol?.type || '').toLowerCase() === 'text') {
+            if (currentSymbol.text !== text) currentSymbol.text = text
+          } else {
+            liveLabelGraphicRef.current.symbol = buildLiveAreaLabelSymbol(layer, text)
+          }
+        } catch {
+          try {
+            liveLabelGraphicRef.current.symbol = buildLiveAreaLabelSymbol(layer, text)
+          } catch {}
+        }
+        liveLabelGeometryRef.current = geometry
+        liveLabelSourceLayerRef.current = layer
+        return
+      }
 
-    if (liveLabelGraphicRef.current) {
-      try {
-        liveLabelGraphicRef.current.geometry = point
-        liveLabelGraphicRef.current.symbol = symbol
-      } catch {}
-      return
-    }
-
-    const graphic = new Graphic({
-      geometry: point,
-      symbol
-    } as any)
-    liveLabelGraphicRef.current = graphic
-    try { labelLayer.add?.(graphic) } catch {}
-  }, [])
+      const graphic = new Graphic({
+        geometry: point,
+        symbol: buildLiveAreaLabelSymbol(layer, text)
+      } as any)
+      liveLabelGraphicRef.current = graphic
+      liveLabelGeometryRef.current = geometry
+      liveLabelSourceLayerRef.current = layer
+      try { labelLayer.add?.(graphic) } catch {}
+    }, [])
 
   const applySnappingForLayer = useCallback((layer: any) => {
     const svm = svmRef.current as any
@@ -559,6 +662,10 @@ export function useGeometry () {
     } catch {}
   }, [])
 
+  const prepareActiveSketchSession = useCallback((layer: any) => {
+    applySnappingForLayer(layer)
+  }, [applySnappingForLayer])
+
   const restartUpdateSession = useCallback((draft: any, allowMove: boolean) => {
     const svm = svmRef.current
     if (!svm || !draft) return
@@ -566,7 +673,7 @@ export function useGeometry () {
     refreshUpdateDraftGraphic(draft)
     applyUpdateSketchSymbol(draft, updateLayerRef.current?.geometryType)
     syncLiveAreaLabel(draft.geometry, updateLayerRef.current)
-    applySnappingForLayer(updateLayerRef.current)
+    prepareActiveSketchSession(updateLayerRef.current)
 
     if (allowMove) {
       svm.update([draft], {
@@ -587,7 +694,7 @@ export function useGeometry () {
       enableScaling: false,
       preserveAspectRatio: false
     } as any)
-  }, [applySnappingForLayer, refreshUpdateDraftGraphic, syncLiveAreaLabel])
+  }, [prepareActiveSketchSession, refreshUpdateDraftGraphic, syncLiveAreaLabel])
 
   const setupOnView = useCallback((view: MapView) => {
     viewRef.current = view
@@ -619,6 +726,10 @@ export function useGeometry () {
       e.stopPropagation()
     }
     viewEl?.addEventListener('contextmenu', onContextMenu, true)
+    const liveLabelViewHandle = (view as any)?.watch?.('extent', () => {
+      if (!liveLabelGeometryRef.current || !liveLabelSourceLayerRef.current) return
+      syncLiveAreaLabel(liveLabelGeometryRef.current, liveLabelSourceLayerRef.current)
+    })
 
     svm.on('create', async (ev: any) => {
       if (ev.state === 'cancel') {
@@ -1083,6 +1194,7 @@ export function useGeometry () {
     return () => {
       _setMode('idle')
       try { viewEl?.removeEventListener('contextmenu', onContextMenu, true) } catch {}
+      try { liveLabelViewHandle?.remove?.() } catch {}
       try { svm.cancel() } catch {}
       try { svm.destroy() } catch {}
       svmRef.current = null
@@ -1201,8 +1313,9 @@ export function useGeometry () {
         : 'point'
 
     _setMode('creating')
+    prepareActiveSketchSession(layer)
     svm.create(svmType)
-  }, [])
+  }, [prepareActiveSketchSession])
 
   const startSplit = useCallback((
     itemOrLayer: { graphic?: any, layer: FeatureLayer },

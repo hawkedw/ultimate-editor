@@ -275,6 +275,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const boxLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
   const boxGraphicRef = React.useRef<__esri.Graphic | null>(null)
   const dragStartRef = React.useRef<{ x: number; y: number } | null>(null)
+  const rmbPanRef = React.useRef<{ start: { x: number, y: number }, center: any } | null>(null)
   const isBoxDraggingRef = React.useRef(false)
 
   const mergePreviewLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
@@ -510,6 +511,35 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     boxGraphicRef.current = null
   }
 
+  function isRightMouseDrag (e: any) {
+    const native = e?.native || e
+    const button = Number(native?.button ?? e?.button)
+    const buttons = Number(native?.buttons ?? e?.buttons)
+    return button === 2 || (Number.isFinite(buttons) && (buttons & 2) === 2)
+  }
+
+  function shouldRmbPanMap () {
+    const sketchMode = geometry.sketchModeRef.current
+    const t = toolRef.current
+    return sketchMode === 'updating' ||
+      sketchMode === 'reshaping' ||
+      t === 'add' ||
+      t === 'remove'
+  }
+
+  function updateRmbPan (v: any, e: any) {
+    const state = rmbPanRef.current
+    if (!state || !v?.toScreen || !v?.toMap || !state.center) return
+    try {
+      const centerScreen = v.toScreen(state.center)
+      const nextCenter = v.toMap({
+        x: centerScreen.x - (e.x - state.start.x),
+        y: centerScreen.y - (e.y - state.start.y)
+      })
+      if (nextCenter) v.center = nextCenter
+    } catch {}
+  }
+
   const onActiveViewChange = React.useCallback((jmv: JimuMapView) => {
     const prevView = viewRef.current as any
     selCleanupRef.current?.()
@@ -648,6 +678,30 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     })
 
     const hDrag = v.on('drag', async (e: any) => {
+      if (rmbPanRef.current || (isRightMouseDrag(e) && shouldRmbPanMap())) {
+        if (e.action === 'start') {
+          rmbPanRef.current = {
+            start: { x: e.x, y: e.y },
+            center: v.center?.clone ? v.center.clone() : v.center
+          }
+          try { e.stopPropagation() } catch {}
+          return
+        }
+
+        if (e.action === 'update') {
+          updateRmbPan(v, e)
+          try { e.stopPropagation() } catch {}
+          return
+        }
+
+        if (e.action === 'end') {
+          updateRmbPan(v, e)
+          rmbPanRef.current = null
+          try { e.stopPropagation() } catch {}
+          return
+        }
+      }
+
       if (geometry.sketchModeRef.current !== 'idle') return
       if (divideModeRef.current && divideDirectionToolRef.current === 'draw-line') {
         if (e.action === 'start') {
@@ -722,6 +776,14 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       }
     })
 
+    const viewEl = v?.container as HTMLElement | null
+    const onContextMenu = (e: MouseEvent) => {
+      if (!shouldRmbPanMap()) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    viewEl?.addEventListener('contextmenu', onContextMenu, true)
+
     selCleanupRef.current = selection.setupOnView(v)
     geomCleanupRef.current = geometry.setupOnView(v as any)
 
@@ -729,6 +791,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       clearMergePreview()
       try { hClick.remove() } catch {}
       try { hDrag.remove() } catch {}
+      try { viewEl?.removeEventListener('contextmenu', onContextMenu, true) } catch {}
       try { hPopup?.remove?.() } catch {}
       try { hLayers?.remove?.() } catch {}
       while (visHandles.length) { try { visHandles.pop().remove() } catch {} }
@@ -736,6 +799,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       try { boxLayerRef.current?.destroy?.() } catch {}
       boxLayerRef.current = null
       boxGraphicRef.current = null
+      rmbPanRef.current = null
       try { if (mergePreviewLayerRef.current) v.map.remove(mergePreviewLayerRef.current) } catch {}
       try { mergePreviewLayerRef.current?.destroy?.() } catch {}
       mergePreviewLayerRef.current = null
