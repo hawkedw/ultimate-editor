@@ -397,10 +397,18 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     return null
   }
 
-  const activeSplitLayer = getTopSplittableLayer(viewRef.current)
+  const selectedGeometryLayersCanEdit = sel.length === 0 ||
+    sel.every((item) => resolveRuleEffective(cfgRef.current, item.layer).allowGeomUpdate === true)
+  const selectedPolygonLayerCanEdit = !!selectedLayer &&
+    sameLayerSelected &&
+    selectedGeometryLayersCanEdit &&
+    (selectedLayer as any)?.geometryType === 'polygon'
+  const activeSplitLayer = sel.length > 0
+    ? (selectedPolygonLayerCanEdit ? selectedLayer as FeatureLayer : null)
+    : getTopSplittableLayer(viewRef.current)
   const canSplit = !!activeSplitLayer
   const canReshape = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
-  const canMerge = !!layerRule?.allowGeomUpdate && sel.length >= 2 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
+  const canMerge = !!layerRule?.allowGeomUpdate && selectedGeometryLayersCanEdit && sel.length >= 2 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
   const canDivide = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected && (selectedLayer as any)?.geometryType === 'polygon'
   const canGeom = !!layerRule?.allowGeomUpdate && sel.length === 1 && sameLayerSelected
   const canUndo = !historyBusy && undoStack.length > 0
@@ -930,6 +938,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   const startReshapeSession = React.useCallback((itemOrLayer: any) => {
     if (!itemOrLayer?.layer) return
+    if (resolveRuleEffective(cfgRef.current, itemOrLayer.layer).allowGeomUpdate !== true) return
     exitDivideMode()
     setGeomChecked(false); setMergeMode(false); clearMergePreview(); setTool('reshape'); setMapCursor(viewRef.current, 'default')
     geometry.startReshapeByLine(itemOrLayer as any, async (result: any) => {
@@ -943,17 +952,17 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const onToggleReshape = React.useCallback(() => {
     setGeomChecked(false); setMergeMode(false); clearMergePreview()
     if (tool === 'reshape') { geometry.cancel(); selection.clearSelection(); setTool('none'); setMapCursor(viewRef.current, 'default'); return }
-    const reshapeLayer = getTopSplittableLayer(viewRef.current)
+    const reshapeLayer = activeSplitLayer
     if (!reshapeLayer) return
     const reshapeTarget = sel.length === 1 && sameLayerSelected && layerKey(sel[0].layer) === layerKey(reshapeLayer) ? sel[0] : { layer: reshapeLayer }
     startReshapeSession(reshapeTarget)
-  }, [tool, geometry, selection, sel, sameLayerSelected, startReshapeSession])
+  }, [tool, geometry, selection, sel, sameLayerSelected, activeSplitLayer, startReshapeSession])
 
   const onToggleSplit = React.useCallback(() => {
     exitDivideMode()
     setGeomChecked(false); setMergeMode(false); clearMergePreview()
     if (tool === 'split') { geometry.cancel(); setTool('none'); setMapCursor(viewRef.current, 'default'); return }
-    const splitLayer = getTopSplittableLayer(viewRef.current)
+    const splitLayer = activeSplitLayer
     if (!splitLayer) return
     setTool('split'); setMapCursor(viewRef.current, 'default')
     const splitTarget = sel.length === 1 && sameLayerSelected && layerKey(sel[0].layer) === layerKey(splitLayer) ? sel[0] : { layer: splitLayer }
@@ -963,7 +972,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       if (beforeGs.length && afterGs.length) pushHistory(makeHistoryEntry(splitLayer, beforeGs, afterGs, 'split'))
       selection.clearSelection(); setTool('none')
     })
-  }, [tool, geometry, selection, sel, sameLayerSelected])
+  }, [tool, geometry, selection, sel, sameLayerSelected, activeSplitLayer, pushHistory])
 
   const onStartMerge = React.useCallback(() => {
     if (!canMerge) return
@@ -1088,6 +1097,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     const oid = item?.oid
     const polygon = sourceGraphic?.geometry
     if (!item || !layer || oid == null || polygon?.type !== 'polygon') return
+    if (resolveRuleEffective(cfgRef.current, layer).allowGeomUpdate !== true) return
 
     const result = buildDivideGeometries(polygon, settings, divideDirectionRef.current, divideReversedRef.current)
     if (!result.geometries || result.geometries.length < 2) {
@@ -1179,6 +1189,10 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     let afterGraphic: any = null
     const isGeomEdit = geomChecked || geometry.sketchModeRef.current === 'updating'
     if (isGeomEdit) {
+      if (resolveRuleEffective(cfgRef.current, layer).allowGeomUpdate !== true) {
+        geometry.cancel()
+        return
+      }
       afterGraphic = await geometry.commitUpdate(draftAttrs)
     } else {
       try {
