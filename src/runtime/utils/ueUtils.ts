@@ -95,6 +95,37 @@ export function canUpdateByLayerCapabilities(layer: any): boolean {
   return true
 }
 
+function geometryUpdateExplicitlyDisabled(layer: any): boolean {
+  const effectiveEditing = layer?.effectiveCapabilities?.editing || null
+  const editing = layer?.capabilities?.editing || null
+  const effectiveOps = layer?.effectiveCapabilities?.operations || null
+  const ops = layer?.capabilities?.operations || null
+  const flags = [
+    layer?.allowGeometryUpdates,
+    layer?.sourceJSON?.allowGeometryUpdates,
+    effectiveEditing?.supportsGeometryUpdate,
+    effectiveEditing?.supportsGeometryUpdates,
+    editing?.supportsGeometryUpdate,
+    editing?.supportsGeometryUpdates,
+    effectiveOps?.supportsGeometryUpdate,
+    effectiveOps?.supportsGeometryUpdates,
+    effectiveOps?.updateGeometry,
+    effectiveOps?.geometryUpdate,
+    ops?.supportsGeometryUpdate,
+    ops?.supportsGeometryUpdates,
+    ops?.updateGeometry,
+    ops?.geometryUpdate
+  ]
+
+  return flags.some(flag => flag === false)
+}
+
+export function canUpdateGeometryByLayerCapabilities(layer: any): boolean {
+  if (!canUpdateByLayerCapabilities(layer)) return false
+  if (geometryUpdateExplicitlyDisabled(layer)) return false
+  return true
+}
+
 export function canCreateByLayerCapabilities(layer: any): boolean {
   const edit = layerEditingEnabled(layer)
   if (edit === false) return false
@@ -129,6 +160,7 @@ export function resolveRuleEffective(cfg: IMConfig | undefined, layer: any): Lay
 
   const capCreate = canCreateByLayerCapabilities(layer)
   const capUpdate = canUpdateByLayerCapabilities(layer)
+  const capGeomUpdate = canUpdateGeometryByLayerCapabilities(layer)
   const capDelete = canDeleteByLayerCapabilities(layer)
 
   const allowCreate = (r?.allowCreate ?? capCreate) && capCreate
@@ -136,7 +168,7 @@ export function resolveRuleEffective(cfg: IMConfig | undefined, layer: any): Lay
   const allowDelete = (r?.allowDelete ?? capDelete) && capDelete
 
   const allowAttrUpdate = (r?.allowAttrUpdate ?? allowUpdate) && allowUpdate
-  const allowGeomUpdate = (r?.allowGeomUpdate ?? allowUpdate) && allowUpdate
+  const allowGeomUpdate = (r?.allowGeomUpdate ?? allowUpdate) && allowUpdate && capGeomUpdate
 
   return { ...r, id: r?.id ?? '', allowCreate, allowUpdate, allowAttrUpdate, allowGeomUpdate, allowDelete }
 }

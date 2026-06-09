@@ -44,8 +44,27 @@ function layerOps (l: any): any {
 // [CHANGE 3] helper: can this layer's geometry be updated at service level?
 function layerCanUpdateGeom (l: any): boolean {
   if (!l) return true
-  if (l?.capabilities?.editing?.supportsGeometryUpdate === false) return false
   if (l?.allowGeometryUpdates === false) return false
+  if (l?.sourceJSON?.allowGeometryUpdates === false) return false
+  const effectiveEditing = l?.effectiveCapabilities?.editing || null
+  const editing = l?.capabilities?.editing || null
+  const effectiveOps = l?.effectiveCapabilities?.operations || null
+  const ops = layerOps(l)
+  const flags = [
+    effectiveEditing?.supportsGeometryUpdate,
+    effectiveEditing?.supportsGeometryUpdates,
+    editing?.supportsGeometryUpdate,
+    editing?.supportsGeometryUpdates,
+    effectiveOps?.supportsGeometryUpdate,
+    effectiveOps?.supportsGeometryUpdates,
+    effectiveOps?.updateGeometry,
+    effectiveOps?.geometryUpdate,
+    ops?.supportsGeometryUpdate,
+    ops?.supportsGeometryUpdates,
+    ops?.updateGeometry,
+    ops?.geometryUpdate
+  ]
+  if (flags.some(flag => flag === false)) return false
   return true
 }
 

@@ -235,8 +235,27 @@ export default function LayerConfig (props: {
     const l = meta.apiLayer
     if (!meta.canUpdate) return false
     if (!l) return true
-    if (l?.capabilities?.editing?.supportsGeometryUpdate === false) return false
     if (l?.allowGeometryUpdates === false) return false
+    if (l?.sourceJSON?.allowGeometryUpdates === false) return false
+    const effectiveEditing = l?.effectiveCapabilities?.editing || null
+    const editing = l?.capabilities?.editing || null
+    const effectiveOps = l?.effectiveCapabilities?.operations || null
+    const ops = l?.capabilities?.operations || null
+    const flags = [
+      effectiveEditing?.supportsGeometryUpdate,
+      effectiveEditing?.supportsGeometryUpdates,
+      editing?.supportsGeometryUpdate,
+      editing?.supportsGeometryUpdates,
+      effectiveOps?.supportsGeometryUpdate,
+      effectiveOps?.supportsGeometryUpdates,
+      effectiveOps?.updateGeometry,
+      effectiveOps?.geometryUpdate,
+      ops?.supportsGeometryUpdate,
+      ops?.supportsGeometryUpdates,
+      ops?.updateGeometry,
+      ops?.geometryUpdate
+    ]
+    if (flags.some(flag => flag === false)) return false
     return true
   })()
 
