@@ -17,6 +17,7 @@ type LayerMeta = {
   canUpdate: boolean
   canDelete: boolean
   apiLayer: any
+  webMapLayerJson?: any
 }
 
 function norm (v: any): string { return String(v ?? '').trim().toLowerCase() }
@@ -39,6 +40,37 @@ function layerEditingEnabled (l: any): boolean {
 
 function layerOps (l: any): any {
   return l?.effectiveCapabilities?.operations ?? l?.capabilities?.operations ?? null
+}
+
+function capabilityTokens (value: any): Set<string> | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  return new Set(value.split(',').map(part => part.trim().toLowerCase()).filter(Boolean))
+}
+
+function capabilitiesAllowEditing (value: any): boolean | null {
+  const tokens = capabilityTokens(value)
+  if (!tokens) return null
+  return tokens.has('editing')
+}
+
+function layerJsonAllowsEditing (json: any): boolean {
+  if (!json) return true
+  if (json?.editingEnabled === false) return false
+  if (json?.layerDefinition?.editingEnabled === false) return false
+
+  const checks = [
+    capabilitiesAllowEditing(json?.capabilities),
+    capabilitiesAllowEditing(json?.layerDefinition?.capabilities)
+  ]
+  return !checks.some(value => value === false)
+}
+
+function layerAllowsEditing (layer: any, webMapLayerJson?: any): boolean {
+  if (layerEditingEnabled(layer) === false) return false
+  if (!layerJsonAllowsEditing(webMapLayerJson)) return false
+  if (!layerJsonAllowsEditing(layer?.sourceJSON)) return false
+  if (!layerJsonAllowsEditing(layer?.layerDefinition)) return false
+  return true
 }
 
 // [CHANGE 3] helper: can this layer's geometry be updated at service level?
@@ -95,6 +127,32 @@ function collectFeatureLayersFromMap (view: any): any[] {
   return ordered
 }
 
+function collectWebMapLayerJsons (map: any): any[] {
+  const source = map?.sourceJSON || map?.toJSON?.()
+  const out: any[] = []
+
+  const visit = (layerJson: any) => {
+    if (!layerJson) return
+    out.push(layerJson)
+    const children = layerJson.layers || layerJson.sublayers || []
+    for (const child of children) visit(child)
+  }
+
+  for (const layerJson of (source?.operationalLayers || source?.layers || [])) visit(layerJson)
+  return out
+}
+
+function findWebMapLayerJson (map: any, layer: any, resolvedUrl?: string): any {
+  const layerJsons = collectWebMapLayerJsons(map)
+  const id = String(layer?.id ?? '')
+  const title = String(layer?.title ?? '')
+  const url = normUrl(resolvedUrl || layer?.url)
+
+  return layerJsons.find((json) => String(json?.id ?? '') === id) ||
+    layerJsons.find((json) => url && normUrl(json?.url) === url) ||
+    layerJsons.find((json) => title && String(json?.title ?? '') === title)
+}
+
 function getEditableFeatureLayersFromView (jmv: JimuMapView | null): LayerMeta[] {
   const view: any = jmv?.view
   const fls = collectFeatureLayersFromMap(view)
@@ -108,10 +166,21 @@ function getEditableFeatureLayersFromView (jmv: JimuMapView | null): LayerMeta[]
     if (resolvedUrl && !/\/\d+$/.test(resolvedUrl) && lidNum != null) resolvedUrl = `${resolvedUrl}/${lidNum}`
     const key = layerInstanceKey(l, idx)
     const ops = layerOps(l)
-    const canAdd = !!ops?.supportsAdd
-    const canUpdate = !!ops?.supportsUpdate
-    const canDelete = !!ops?.supportsDelete
-    return { key, title: String(l?.title ?? l?.id ?? 'Layer'), url: resolvedUrl ?? rawUrl, canAdd, canUpdate, canDelete, apiLayer: l }
+    const webMapLayerJson = findWebMapLayerJson(view?.map, l, resolvedUrl ?? rawUrl)
+    const editingAllowed = layerAllowsEditing(l, webMapLayerJson)
+    const canAdd = editingAllowed && !!ops?.supportsAdd
+    const canUpdate = editingAllowed && !!ops?.supportsUpdate
+    const canDelete = editingAllowed && !!ops?.supportsDelete
+    return {
+      key,
+      title: String(l?.title ?? l?.id ?? 'Layer'),
+      url: resolvedUrl ?? rawUrl,
+      canAdd,
+      canUpdate,
+      canDelete,
+      apiLayer: l,
+      webMapLayerJson
+    }
   })
 
   return metas.filter(m => layerEditingEnabled(m.apiLayer) && (m.canAdd || m.canUpdate))

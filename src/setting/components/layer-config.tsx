@@ -23,12 +23,21 @@ type LayerMeta = {
   canUpdate: boolean
   canDelete: boolean
   apiLayer?: any
+  webMapLayerJson?: any
 }
 
 type ExtendedFieldSetting = FieldSetting & {
   required?: boolean
   defaultValue?: string
   defaultIsArcade?: boolean
+}
+
+interface FormFieldInfo {
+  fieldName: string
+  label?: string
+  visible: boolean
+  editable?: boolean | null
+  required?: boolean | null
 }
 
 const toImmutable = Immutable as any
@@ -64,6 +73,85 @@ function applySortByPopup (fields: ServiceField[], popupFieldInfos: any[]): Serv
     const ib = popupOrder.has(b.name) ? popupOrder.get(b.name)! : 1e9
     return ia - ib
   })
+}
+
+function asArray (value: any): any[] {
+  if (!value) return []
+  if (Array.isArray(value)) return value
+  return value?.toArray?.() ?? []
+}
+
+function getStaticExpressionValue (formTemplate: any, expressionName: any): boolean | null {
+  if (typeof expressionName === 'boolean') return expressionName
+  if (expressionName && typeof expressionName === 'object') {
+    if (typeof expressionName.value === 'boolean') return expressionName.value
+    if (typeof expressionName.expression === 'string') return getStaticExpressionValue(formTemplate, expressionName.expression)
+    if (typeof expressionName.name === 'string') return getStaticExpressionValue(formTemplate, expressionName.name)
+  }
+  const name = String(expressionName ?? '').trim()
+  if (!name) return null
+  const infos = asArray(formTemplate?.expressionInfos ?? formTemplate?.formExpressionInfos)
+  const match = infos.find((info: any) => String(info?.name ?? '').trim() === name)
+  const expression = String(match?.expression ?? name)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '')
+    .trim()
+    .replace(/;+$/, '')
+    .toLowerCase()
+  if (expression === 'true' || expression === 'return true') return true
+  if (expression === 'false' || expression === 'return false') return false
+  return null
+}
+
+function getElementBoolean (formTemplate: any, element: any, directProp: string, expressionProp: string): boolean | null {
+  if (typeof element?.[directProp] === 'boolean') return element[directProp]
+  return getStaticExpressionValue(formTemplate, element?.[expressionProp])
+}
+
+function getFormTemplate (layer: any, webMapLayerJson?: any) {
+  const candidates = [
+    webMapLayerJson?.formInfo,
+    webMapLayerJson?.formTemplate,
+    webMapLayerJson?.layerDefinition?.formInfo,
+    layer?.formTemplate,
+    layer?.sourceJSON?.formInfo,
+    layer?.sourceJSON?.formTemplate,
+    layer?.sourceJSON?.layerDefinition?.formInfo,
+    layer?.layerDefinition?.formInfo
+  ]
+  return candidates.find(t => asArray(t?.elements ?? t?.formElements).length > 0) ?? null
+}
+
+function collectFormFieldInfos (formTemplate: any): FormFieldInfo[] {
+  const out: FormFieldInfo[] = []
+  const seen = new Set<string>()
+
+  const visit = (elements: any[], parentVisible: boolean) => {
+    for (const el of elements) {
+      if (!el) continue
+      const visibleSetting = getElementBoolean(formTemplate, el, 'visible', 'visibilityExpression')
+      const visible = parentVisible && (visibleSetting ?? true)
+      const fieldName = String(el.fieldName ?? '').trim()
+
+      if (fieldName) {
+        if (seen.has(fieldName)) continue
+        seen.add(fieldName)
+        out.push({
+          fieldName,
+          label: el.label,
+          visible,
+          editable: getElementBoolean(formTemplate, el, 'editable', 'editableExpression'),
+          required: getElementBoolean(formTemplate, el, 'required', 'requiredExpression')
+        })
+      }
+
+      const children = asArray(el.elements ?? el.formElements)
+      if (children.length) visit(children, visible)
+    }
+  }
+
+  visit(asArray(formTemplate?.elements ?? formTemplate?.formElements), true)
+  return out
 }
 
 export default function LayerConfig (props: {
@@ -110,6 +198,18 @@ export default function LayerConfig (props: {
     [meta?.apiLayer?.popupTemplate?.fieldInfos]
   )
   const hasPopupInfos = popupFieldInfos.length > 0
+  const formFieldInfos: FormFieldInfo[] = React.useMemo(() => {
+    const formTemplate = getFormTemplate((meta as any)?.apiLayer, (meta as any)?.webMapLayerJson)
+    return formTemplate ? collectFormFieldInfos(formTemplate) : []
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meta?.apiLayer?.formTemplate, meta?.apiLayer?.sourceJSON?.formInfo, meta?.apiLayer?.sourceJSON?.formTemplate, meta?.webMapLayerJson])
+  const hasFormInfos = formFieldInfos.length > 0
+
+  const formFieldInfoByName = React.useMemo(() => {
+    const out = new Map<string, FormFieldInfo>()
+    formFieldInfos.forEach(fi => { if (fi.fieldName) out.set(fi.fieldName, fi) })
+    return out
+  }, [formFieldInfos])
 
   const getPopupFI = (name: string): any | null => {
     if (!hasPopupInfos) return null
@@ -136,10 +236,9 @@ export default function LayerConfig (props: {
         if (cancelled) return
         setServiceFields([])
         setLoadError(String(e?.message ?? e))
-      })
+    })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta?.url])
 
   const update = (patch: Partial<LayerRule>) => {
@@ -149,25 +248,27 @@ export default function LayerConfig (props: {
   const getFieldSetting = (sf: ServiceField): ExtendedFieldSetting => {
     const existing = ruleFields.find(f => f.name === sf.name)
     if (existing) return existing
+    const formFi = formFieldInfoByName.get(sf.name)
     const fi = getPopupFI(sf.name)
-    const visibleDefault = hasPopupInfos ? !!fi?.visible : true
-    const editableDefault = hasPopupInfos
-      ? (fi?.isEditable ?? false) && (sf.editable !== false)
-      : (sf.editable !== false)
+    const visibleDefault = hasFormInfos ? !!formFi?.visible : (hasPopupInfos ? !!fi?.visible : true)
+    const editableDefault = hasFormInfos
+      ? !!formFi && (formFi.editable ?? true) !== false && (sf.editable !== false)
+      : (hasPopupInfos
+          ? (fi?.isEditable ?? false) && (sf.editable !== false)
+          : (sf.editable !== false))
     return {
       name: sf.name,
-      label: fi?.label || sf.alias || sf.name,
+      label: formFi?.label || fi?.label || sf.alias || sf.name,
       visible: visibleDefault,
       editable: editableDefault,
-      required: false,
+      required: hasFormInfos ? formFi?.required === true : false,
       defaultValue: '',
       defaultIsArcade: false
     }
   }
 
-  // Ключевое: если ruleFields уже есть — используем их порядок как основу,
-  // добавляем в конец поля сервиса которых ещё нет в rule.
-  // Если ruleFields пустые (первая загрузка) — сортируем по popup.
+  // Field Maps/New Map Viewer writes formInfo; Classic writes popup fieldInfos.
+  // Existing saved rules still win, so manual DnD/user choices are preserved.
   const effectiveFields: ExtendedFieldSetting[] = React.useMemo(() => {
     if (serviceFields.length === 0) return []
 
@@ -188,11 +289,13 @@ export default function LayerConfig (props: {
       return ordered
     }
 
-    // Первая загрузка: сортируем по popup и строим из сервиса
-    const sorted = applySortByPopup(serviceFields, popupFieldInfos)
+    // Первая загрузка: Field Maps formInfo имеет приоритет над Classic popup.
+    const sorted = hasFormInfos
+      ? applySortByPopup(serviceFields, formFieldInfos)
+      : applySortByPopup(serviceFields, popupFieldInfos)
     return sorted.map(sf => getFieldSetting(sf))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceFields, ruleFields, popupFieldInfos])
+  }, [serviceFields, ruleFields, popupFieldInfos, formFieldInfos, hasFormInfos])
 
   const setFields = (next: ExtendedFieldSetting[]) => update({ fields: next as any })
 
@@ -204,6 +307,44 @@ export default function LayerConfig (props: {
     setFields(effectiveFields.map(f => ({ ...f, ...patch })))
   }
 
+  const checkboxHitStyle: React.CSSProperties = {
+    width: 28,
+    height: 28,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 4,
+    cursor: 'pointer',
+    userSelect: 'none'
+  }
+
+  const renderHitCheckbox = (checked: boolean, onCheckedChange: (checked: boolean) => void) => (
+    <span
+      role='checkbox'
+      aria-checked={checked}
+      tabIndex={0}
+      draggable={false}
+      style={checkboxHitStyle}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onCheckedChange(!checked)
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== ' ' && e.key !== 'Enter') return
+        e.preventDefault()
+        e.stopPropagation()
+        onCheckedChange(!checked)
+      }}
+      onDragStart={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+    >
+      <Checkbox checked={checked} style={{ pointerEvents: 'none' }} />
+    </span>
+  )
+
   const allVisible = effectiveFields.length > 0 && effectiveFields.every(f => !!f.visible)
   const allEditable = effectiveFields.length > 0 && effectiveFields.every(f => !!f.editable)
   const allRequired = effectiveFields.length > 0 && effectiveFields.every(f => !!f.required)
@@ -213,7 +354,7 @@ export default function LayerConfig (props: {
     if (serviceFields.length === 0 || ruleFields.length > 0) return
     setFields(effectiveFields)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceFields, popupFieldInfos])
+  }, [serviceFields, popupFieldInfos, formFieldInfos])
 
   const handleDragStart = (idx: number) => { dragIndexRef.current = idx }
   const handleDragOver = (e: React.DragEvent, idx: number) => { e.preventDefault(); setDragOver(idx) }
@@ -317,28 +458,19 @@ export default function LayerConfig (props: {
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>
                 <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                   <span>Видимость</span>
-                  <Checkbox
-                    checked={allVisible}
-                    onChange={(e: any) => updateAllFields({ visible: !!(e?.target ? e.target.checked : e) })}
-                  />
+                  {renderHitCheckbox(allVisible, checked => { updateAllFields({ visible: checked }) })}
                 </div>
               </th>
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>
                 <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                   <span>Редактирование</span>
-                  <Checkbox
-                    checked={allEditable}
-                    onChange={(e: any) => updateAllFields({ editable: !!(e?.target ? e.target.checked : e) })}
-                  />
+                  {renderHitCheckbox(allEditable, checked => { updateAllFields({ editable: checked }) })}
                 </div>
               </th>
               <th style={{ textAlign: 'center', padding: '4px 6px', fontWeight: 600 }}>
                 <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
                   <span>Обязательно</span>
-                  <Checkbox
-                    checked={allRequired}
-                    onChange={(e: any) => updateAllFields({ required: !!(e?.target ? e.target.checked : e) })}
-                  />
+                  {renderHitCheckbox(allRequired, checked => { updateAllFields({ required: checked }) })}
                 </div>
               </th>
               <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Значение</th>
@@ -360,13 +492,13 @@ export default function LayerConfig (props: {
                 <td style={{ textAlign: 'center', padding: '4px 6px', color: 'rgba(255,255,255,0.35)', userSelect: 'none' }}>⠿</td>
                 <td style={{ padding: '4px 6px' }}>{fs.label || fs.name}</td>
                 <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                  <Checkbox checked={!!fs?.visible} onChange={(e: any) => updateField(fs.name, { visible: !!(e?.target ? e.target.checked : e) })} />
+                  {renderHitCheckbox(!!fs?.visible, checked => { updateField(fs.name, { visible: checked }) })}
                 </td>
                 <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                  <Checkbox checked={!!fs?.editable} onChange={(e: any) => updateField(fs.name, { editable: !!(e?.target ? e.target.checked : e) })} />
+                  {renderHitCheckbox(!!fs?.editable, checked => { updateField(fs.name, { editable: checked }) })}
                 </td>
                 <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                  <Checkbox checked={!!fs?.required} onChange={(e: any) => updateField(fs.name, { required: !!(e?.target ? e.target.checked : e) })} />
+                  {renderHitCheckbox(!!fs?.required, checked => { updateField(fs.name, { required: checked }) })}
                 </td>
                 <td style={{ padding: '4px 6px' }}>
                   <TextInput size='sm' value={fs?.defaultValue ?? ''}
@@ -374,7 +506,7 @@ export default function LayerConfig (props: {
                     style={{ height: 26, width: '100%' }} />
                 </td>
                 <td style={{ textAlign: 'center', padding: '4px 6px' }}>
-                  <Checkbox checked={!!fs?.defaultIsArcade} onChange={(e: any) => updateField(fs.name, { defaultIsArcade: !!(e?.target ? e.target.checked : e) })} />
+                  {renderHitCheckbox(!!fs?.defaultIsArcade, checked => { updateField(fs.name, { defaultIsArcade: checked }) })}
                 </td>
               </tr>
             ))}

@@ -79,10 +79,38 @@ function layerEditingEnabled(layer: any): boolean | undefined {
   return boolOrUndef(layer?.effectiveEditingEnabled) ?? boolOrUndef(layer?.editingEnabled)
 }
 
+function capabilityTokens(value: any): Set<string> | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  return new Set(value.split(',').map(part => part.trim().toLowerCase()).filter(Boolean))
+}
+
+function capabilitiesAllowEditing(value: any): boolean | null {
+  const tokens = capabilityTokens(value)
+  if (!tokens) return null
+  return tokens.has('editing')
+}
+
+function layerJsonAllowsEditing(json: any): boolean {
+  if (!json) return true
+  if (json?.editingEnabled === false) return false
+  if (json?.layerDefinition?.editingEnabled === false) return false
+
+  const checks = [
+    capabilitiesAllowEditing(json?.capabilities),
+    capabilitiesAllowEditing(json?.layerDefinition?.capabilities)
+  ]
+  return !checks.some(value => value === false)
+}
+
+function layerExplicitlyDisablesEditing(layer: any): boolean {
+  return !layerJsonAllowsEditing(layer?.sourceJSON) || !layerJsonAllowsEditing(layer?.layerDefinition)
+}
+
 // ВАЖНО: supportsUpdate / supportsAdd / supportsDelete — это то, что нужно проверять.
 export function canUpdateByLayerCapabilities(layer: any): boolean {
   const edit = layerEditingEnabled(layer)
   if (edit === false) return false
+  if (layerExplicitlyDisablesEditing(layer)) return false
 
   const ops = getOps(layer)
   const su = boolOrUndef(ops?.supportsUpdate) ?? boolOrUndef(ops?.update)
@@ -129,6 +157,7 @@ export function canUpdateGeometryByLayerCapabilities(layer: any): boolean {
 export function canCreateByLayerCapabilities(layer: any): boolean {
   const edit = layerEditingEnabled(layer)
   if (edit === false) return false
+  if (layerExplicitlyDisablesEditing(layer)) return false
 
   const ops = getOps(layer)
   const sa = boolOrUndef(ops?.supportsAdd) ?? boolOrUndef(ops?.supportsCreate) ?? boolOrUndef(ops?.create)
@@ -142,6 +171,7 @@ export function canCreateByLayerCapabilities(layer: any): boolean {
 export function canDeleteByLayerCapabilities(layer: any): boolean {
   const edit = layerEditingEnabled(layer)
   if (edit === false) return false
+  if (layerExplicitlyDisablesEditing(layer)) return false
 
   const ops = getOps(layer)
   const sd = boolOrUndef(ops?.supportsDelete) ?? boolOrUndef(ops?.delete)
