@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react'
+import { useRef, useCallback, useEffect, useMemo, useState } from 'react'
 import SketchViewModel from 'esri/widgets/Sketch/SketchViewModel'
 import GraphicsLayer from 'esri/layers/GraphicsLayer'
 import Graphic from 'esri/Graphic'
@@ -9,6 +9,7 @@ import type MapView from 'esri/views/MapView'
 import type FeatureLayer from 'esri/layers/FeatureLayer'
 
 export type SketchMode = 'idle' | 'creating' | 'reshaping' | 'splitting' | 'reshapeLine' | 'updating'
+export type SnappingMode = 'full' | 'light'
 
 function sanitizeAttrsForAdd (layer: any, attrs: any = {}) {
   const out = { ...(attrs || {}) }
@@ -24,9 +25,10 @@ function sanitizeAttrsForAdd (layer: any, attrs: any = {}) {
   return out
 }
 
-export function useGeometry () {
+export function useGeometry (snappingMode: SnappingMode = 'full') {
   const [sketchMode, setSketchMode] = useState<SketchMode>('idle')
   const sketchModeRef = useRef<SketchMode>('idle')
+  const snappingModeRef = useRef<SnappingMode>(snappingMode)
 
   const svmRef = useRef<any>(null)
   const glRef = useRef<any>(null)
@@ -34,6 +36,7 @@ export function useGeometry () {
   const liveLabelGraphicRef = useRef<any>(null)
   const liveLabelGeometryRef = useRef<any>(null)
   const liveLabelSourceLayerRef = useRef<any>(null)
+  const liveLabelRafRef = useRef<number | null>(null)
 
   const createLayerRef = useRef<any>(null)
   const createTemplateRef = useRef<any>(null)
@@ -52,6 +55,10 @@ export function useGeometry () {
   const reshapeLineItemRef = useRef<any>(null)
   const reshapeLineCbRef = useRef<((r: { before: any[], after: any[] } | null) => void) | null>(null)
   const viewRef = useRef<MapView | null>(null)
+
+  useEffect(() => {
+    snappingModeRef.current = snappingMode === 'light' ? 'light' : 'full'
+  }, [snappingMode])
 
   const updateOidRef = useRef<number | null>(null)
   const updateLayerRef = useRef<any>(null)
@@ -81,6 +88,10 @@ export function useGeometry () {
   }
 
   const _clearLiveAreaLabel = () => {
+    try {
+      if (liveLabelRafRef.current != null) window.cancelAnimationFrame?.(liveLabelRafRef.current)
+    } catch {}
+    liveLabelRafRef.current = null
     try {
       if (liveLabelGraphicRef.current && liveLabelLayerRef.current) {
         liveLabelLayerRef.current.remove?.(liveLabelGraphicRef.current)
@@ -268,6 +279,22 @@ export function useGeometry () {
     return null
   }
 
+  const extentContainsExtent = (outer: any, inner: any) => {
+    if (!outer || !inner) return false
+    return inner.xmin >= outer.xmin &&
+      inner.xmax <= outer.xmax &&
+      inner.ymin >= outer.ymin &&
+      inner.ymax <= outer.ymax
+  }
+
+  const extentsIntersect = (a: any, b: any) => {
+    if (!a || !b) return false
+    return a.xmin <= b.xmax &&
+      a.xmax >= b.xmin &&
+      a.ymin <= b.ymax &&
+      a.ymax >= b.ymin
+  }
+
   const pointInsidePolygon = (polygon: any, point: any) => {
     if (!polygon || !point) return false
     try {
@@ -306,6 +333,10 @@ export function useGeometry () {
 
   const getVisiblePolygonForLabel = (polygon: any, view: any) => {
     if (!polygon || !view?.extent) return polygon
+    const polygonExtent = polygon?.extent
+    if (polygonExtent && extentContainsExtent(view.extent, polygonExtent)) return polygon
+    if (polygonExtent && !extentsIntersect(view.extent, polygonExtent)) return polygon
+
     const visibleExtentPolygon = extentToPolygon(view.extent)
     if (!visibleExtentPolygon) return polygon
 
@@ -560,16 +591,14 @@ export function useGeometry () {
     if (!draft) return
     try {
       if (geometryType === 'polygon') {
-        draft.symbol = activePolygonUpdateSymbol
+        if (draft.symbol !== activePolygonUpdateSymbol) draft.symbol = activePolygonUpdateSymbol
         return
       }
       if (geometryType === 'polyline') {
-        draft.symbol = activePolylineUpdateSymbol
+        if (draft.symbol !== activePolylineUpdateSymbol) draft.symbol = activePolylineUpdateSymbol
       }
     } catch {}
   }
-
-
 
   function _restartReshapeSession (sketchG: any) {
     reshapeSketchGraphicRef.current = sketchG
@@ -595,26 +624,35 @@ export function useGeometry () {
   }, [])
 
   const syncLiveAreaLabel = useCallback((geometry: any, layer: any) => {
-    const labelLayer = liveLabelLayerRef.current
-    if (!labelLayer) return
+    liveLabelGeometryRef.current = geometry
+    liveLabelSourceLayerRef.current = layer
 
-    if (!geometry || layer?.geometryType !== 'polygon') {
-      try {
-        if (liveLabelGraphicRef.current) labelLayer.remove?.(liveLabelGraphicRef.current)
-      } catch {}
-      liveLabelGraphicRef.current = null
-      return
-    }
+    if (liveLabelRafRef.current != null) return
 
-    const hectares = getAreaHectares(geometry)
-    const point = getPolygonLabelPoint(geometry, viewRef.current)
-    if (hectares == null || !point) {
-      try {
-        if (liveLabelGraphicRef.current) labelLayer.remove?.(liveLabelGraphicRef.current)
-      } catch {}
-      liveLabelGraphicRef.current = null
-      return
-    }
+    const run = () => {
+      liveLabelRafRef.current = null
+      const labelLayer = liveLabelLayerRef.current
+      const currentGeometry = liveLabelGeometryRef.current
+      const currentLayer = liveLabelSourceLayerRef.current
+      if (!labelLayer) return
+
+      if (!currentGeometry || currentLayer?.geometryType !== 'polygon') {
+        try {
+          if (liveLabelGraphicRef.current) labelLayer.remove?.(liveLabelGraphicRef.current)
+        } catch {}
+        liveLabelGraphicRef.current = null
+        return
+      }
+
+      const hectares = getAreaHectares(currentGeometry)
+      const point = getPolygonLabelPoint(currentGeometry, viewRef.current)
+      if (hectares == null || !point) {
+        try {
+          if (liveLabelGraphicRef.current) labelLayer.remove?.(liveLabelGraphicRef.current)
+        } catch {}
+        liveLabelGraphicRef.current = null
+        return
+      }
 
       const text = hectares.toFixed(2)
       if (liveLabelGraphicRef.current) {
@@ -623,41 +661,46 @@ export function useGeometry () {
         } catch {}
         try {
           const currentSymbol = liveLabelGraphicRef.current.symbol as any
-          const sameLayerStyle = liveLabelSourceLayerRef.current === layer
+          const sameLayerStyle = liveLabelSourceLayerRef.current === currentLayer
           if (sameLayerStyle && currentSymbol && String(currentSymbol?.type || '').toLowerCase() === 'text') {
             if (currentSymbol.text !== text) currentSymbol.text = text
           } else {
-            liveLabelGraphicRef.current.symbol = buildLiveAreaLabelSymbol(layer, text)
+            liveLabelGraphicRef.current.symbol = buildLiveAreaLabelSymbol(currentLayer, text)
           }
         } catch {
           try {
-            liveLabelGraphicRef.current.symbol = buildLiveAreaLabelSymbol(layer, text)
+            liveLabelGraphicRef.current.symbol = buildLiveAreaLabelSymbol(currentLayer, text)
           } catch {}
         }
-        liveLabelGeometryRef.current = geometry
-        liveLabelSourceLayerRef.current = layer
         return
       }
 
       const graphic = new Graphic({
         geometry: point,
-        symbol: buildLiveAreaLabelSymbol(layer, text)
+        symbol: buildLiveAreaLabelSymbol(currentLayer, text)
       } as any)
       liveLabelGraphicRef.current = graphic
-      liveLabelGeometryRef.current = geometry
-      liveLabelSourceLayerRef.current = layer
       try { labelLayer.add?.(graphic) } catch {}
-    }, [])
+    }
+
+    try {
+      liveLabelRafRef.current = window.requestAnimationFrame?.(run) ?? null
+    } catch {
+      liveLabelRafRef.current = null
+    }
+    if (liveLabelRafRef.current == null) run()
+  }, [])
 
   const applySnappingForLayer = useCallback((layer: any) => {
     const svm = svmRef.current as any
     if (!svm) return
+    const featureEnabled = snappingModeRef.current !== 'light'
     try {
       svm.snappingOptions = {
         enabled: true,
         selfEnabled: true,
-        featureEnabled: true,
-        featureSources: layer ? [{ layer, enabled: true }] : []
+        featureEnabled,
+        featureSources: featureEnabled && layer ? [{ layer, enabled: true }] : []
       } as any
     } catch {}
   }, [])
@@ -1463,7 +1506,7 @@ export function useGeometry () {
     return updatedGraphic
   }, [])
 
-  return {
+  return useMemo(() => ({
     setupOnView,
     cancel,
     cancelCreate,
@@ -1475,5 +1518,16 @@ export function useGeometry () {
     commitUpdate,
     sketchMode,
     sketchModeRef
-  }
+  }), [
+    setupOnView,
+    cancel,
+    cancelCreate,
+    confirmCreate,
+    startCreate,
+    startSplit,
+    startReshapeByLine,
+    startGeometryEdit,
+    commitUpdate,
+    sketchMode
+  ])
 }

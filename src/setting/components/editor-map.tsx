@@ -268,6 +268,7 @@ export default function EditorMap (props: {
   const toImmutable = Immutable as any
 
   const rules = toPlainArr<LayerRule>((config as any)?.layers)
+  const snappingMode = (config as any)?.snappingMode === 'light' ? 'light' : 'full'
 
   const C_BG = '#161a20'
   const C_BG2 = '#1d232b'
@@ -308,6 +309,10 @@ export default function EditorMap (props: {
 
   const updateRulesBulk = (nextRules: LayerRule[]) => {
     onConfigChange((config as any).set('layers', toImmutable(dedupeById(nextRules))))
+  }
+
+  const setSnappingMode = (mode: 'full' | 'light') => {
+    onConfigChange((config as any).set('snappingMode', mode))
   }
 
   const setLayerEnabled = (meta: LayerMeta, checked: boolean) => {
@@ -468,6 +473,29 @@ export default function EditorMap (props: {
       />
 
       {drawer}
+
+      <div style={{ padding: '8px 0 10px', borderBottom: `1px solid rgba(255,255,255,0.10)`, marginBottom: 4 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Замыкание</div>
+        <select
+          value={snappingMode}
+          onChange={(e: any) => { setSnappingMode(e?.target?.value === 'light' ? 'light' : 'full') }}
+          style={{
+            width: '100%',
+            minHeight: 30,
+            background: INPUT_BG,
+            color: C_TEXT,
+            border: `1px solid ${C_BORDER}`,
+            borderRadius: 4,
+            padding: '4px 8px'
+          }}
+        >
+          <option value='full'>Полное: вершины + объекты слоя</option>
+          <option value='light'>Легкое: только текущий эскиз</option>
+        </select>
+        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6, lineHeight: 1.35 }}>
+          Легкий режим снижает нагрузку при редактировании крупных слоев, но не притягивает вершины к существующим объектам слоя.
+        </div>
+      </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0 4px' }}>
         <Checkbox

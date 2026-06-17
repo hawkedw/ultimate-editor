@@ -252,8 +252,9 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   React.useEffect(() => { divideSettingsRef.current = divideSettings }, [divideSettings])
   React.useEffect(() => { divideReversedRef.current = divideReversed }, [divideReversed])
 
+  const snappingMode = (cfg as any)?.snappingMode === 'light' ? 'light' : 'full'
   const selection = useSelection(toolRef as any, { cfgRef })
-  const geometry = useGeometry()
+  const geometry = useGeometry(snappingMode)
 
   const [view, setView] = React.useState<__esri.MapView | __esri.SceneView | null>(null)
 
@@ -261,6 +262,9 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const [editableLayers, setEditableLayers] = React.useState<FeatureLayer[]>([])
   const [attrEditableLayers, setAttrEditableLayers] = React.useState<FeatureLayer[]>([])
   const [showSplitButton, setShowSplitButton] = React.useState(false)
+  const editableLayersSigRef = React.useRef('')
+  const attrEditableLayersSigRef = React.useRef('')
+  const showSplitButtonRef = React.useRef(false)
   const [undoStack, setUndoStack] = React.useState<any[]>([])
   const [redoStack, setRedoStack] = React.useState<any[]>([])
   const [historyBusy, setHistoryBusy] = React.useState(false)
@@ -446,9 +450,21 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     const all = collectFeatureLayersFromMap(v).filter((l: any) => isFeatureLayer(l) && l.visible)
     const creatable = all.filter((l: any) => resolveRuleEffective(cfgRef.current, l).allowCreate === true) as FeatureLayer[]
     const attrEditable = all.filter((l: any) => resolveRuleEffective(cfgRef.current, l).allowAttrUpdate === true) as FeatureLayer[]
-    setEditableLayers(creatable)
-    setAttrEditableLayers(attrEditable)
-    setShowSplitButton(all.some((l: any) => resolveRuleEffective(cfgRef.current, l).allowGeomUpdate === true && (l as any).geometryType === 'polygon'))
+    const creatableSig = creatable.map((l: any) => layerKey(l)).join('|')
+    const attrEditableSig = attrEditable.map((l: any) => layerKey(l)).join('|')
+    const nextShowSplit = all.some((l: any) => resolveRuleEffective(cfgRef.current, l).allowGeomUpdate === true && (l as any).geometryType === 'polygon')
+    if (creatableSig !== editableLayersSigRef.current) {
+      editableLayersSigRef.current = creatableSig
+      setEditableLayers(creatable)
+    }
+    if (attrEditableSig !== attrEditableLayersSigRef.current) {
+      attrEditableLayersSigRef.current = attrEditableSig
+      setAttrEditableLayers(attrEditable)
+    }
+    if (nextShowSplit !== showSplitButtonRef.current) {
+      showSplitButtonRef.current = nextShowSplit
+      setShowSplitButton(nextShowSplit)
+    }
     if (isDebugEnabled()) {
       dlog('[UE] creatableLayers:', creatable.map((l: any) => ({ title: l.title, id: l.id, templates: l.templates?.length })))
       dlog('[UE] attrEditableLayers:', attrEditable.map((l: any) => ({ title: l.title, id: l.id })))
@@ -499,7 +515,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
         })
         if (!feats.length) continue
         const mode = toolRef.current === 'remove' ? 'remove' : 'add'
-        for (const g of feats) await selection.selectGraphic(g, mode as any)
+        await selection.selectGraphics(feats, mode as any)
         break
       } catch (e) {
         console.warn('[UE] box-select query error', e)
@@ -766,7 +782,6 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
           boxLayerRef.current?.add(gg as any)
         } else {
           ;(boxGraphicRef.current as any).geometry = ext
-          ;(boxGraphicRef.current as any).symbol = boxSymbol()
         }
         return
       }

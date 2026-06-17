@@ -2,7 +2,7 @@
 import { React } from 'jimu-core'
 import FeatureForm from 'esri/widgets/FeatureForm'
 import type { FieldPolicy } from '../editor/useUltimateEditor'
-import { dlog, dwarn } from '../debug'
+import { dlog, dwarn, isDebugEnabled } from '../debug'
 
 interface Props {
   item: any
@@ -175,6 +175,7 @@ const FeatureFormPanel = ({
   }, [layer, policySignature, isPolicyEmpty, policy])
 
   React.useEffect(() => {
+    if (!isDebugEnabled()) return
     dlog('[UE][FFP] render snapshot', {
       formInstanceKey,
       isNew: !!isNew,
@@ -193,21 +194,24 @@ const FeatureFormPanel = ({
   React.useEffect(() => {
     const host = hostRef.current
     const seq = ++initSeqRef.current
+    const debug = isDebugEnabled()
 
-    dlog('[UE][FFP] effect start', {
-      seq,
-      formInstanceKey,
-      isNew: !!isNew,
-      oid,
-      layerTitle,
-      hasGraphic: !!item?.graphic,
-      hasLayer: !!layer,
-      hasTemplate: !!formTemplate,
-      fieldCount: getElementCount(formTemplate),
-      host: measureElement(host),
-      body: measureElement(host?.parentElement as HTMLElement | null),
-      panel: measureElement(host?.closest?.('.ue-panel') as HTMLElement | null)
-    })
+    if (debug) {
+      dlog('[UE][FFP] effect start', {
+        seq,
+        formInstanceKey,
+        isNew: !!isNew,
+        oid,
+        layerTitle,
+        hasGraphic: !!item?.graphic,
+        hasLayer: !!layer,
+        hasTemplate: !!formTemplate,
+        fieldCount: getElementCount(formTemplate),
+        host: measureElement(host),
+        body: measureElement(host?.parentElement as HTMLElement | null),
+        panel: measureElement(host?.closest?.('.ue-panel') as HTMLElement | null)
+      })
+    }
 
     if (!host || !item?.graphic || !layer) return
     host.innerHTML = ''
@@ -238,45 +242,53 @@ const FeatureFormPanel = ({
     try {
       ff = createForm(true)
       featureFormRef.current = ff
-      dlog('[UE][FFP] init ok', {
-        seq,
-        formInstanceKey,
-        isNew: !!isNew,
-        layerTitle,
-        hasTemplate: !!formTemplate,
-        fieldCount: getElementCount(formTemplate),
-        host: measureElement(host)
-      })
+      if (debug) {
+        dlog('[UE][FFP] init ok', {
+          seq,
+          formInstanceKey,
+          isNew: !!isNew,
+          layerTitle,
+          hasTemplate: !!formTemplate,
+          fieldCount: getElementCount(formTemplate),
+          host: measureElement(host)
+        })
+      }
     } catch (e) {
       dwarn('[UE][FFP] FeatureForm init with template failed, retrying without template', e)
       try {
         host.innerHTML = ''
         ff = createForm(false)
         featureFormRef.current = ff
-        dlog('[UE][FFP] fallback init ok', {
-          seq,
-          formInstanceKey,
-          isNew: !!isNew,
-          layerTitle,
-          host: measureElement(host)
-        })
+        if (debug) {
+          dlog('[UE][FFP] fallback init ok', {
+            seq,
+            formInstanceKey,
+            isNew: !!isNew,
+            layerTitle,
+            host: measureElement(host)
+          })
+        }
       } catch (fallbackError) {
         console.error('[UE][FFP] FeatureForm init error', fallbackError)
       }
     }
 
-    try { rafId = window.requestAnimationFrame?.(() => logDelayed('after raf')) ?? null } catch {}
-    t0 = window.setTimeout?.(() => logDelayed('after timeout 0'), 0)
-    t250 = window.setTimeout?.(() => logDelayed('after timeout 250'), 250)
+    if (debug) {
+      try { rafId = window.requestAnimationFrame?.(() => { logDelayed('after raf') }) ?? null } catch {}
+      t0 = window.setTimeout?.(() => { logDelayed('after timeout 0') }, 0)
+      t250 = window.setTimeout?.(() => { logDelayed('after timeout 250') }, 250)
+    }
 
     return () => {
-      dlog('[UE][FFP] cleanup', {
-        seq,
-        formInstanceKey,
-        host: measureElement(host),
-        body: measureElement(host.parentElement as HTMLElement | null),
-        panel: measureElement(host.closest?.('.ue-panel') as HTMLElement | null)
-      })
+      if (debug) {
+        dlog('[UE][FFP] cleanup', {
+          seq,
+          formInstanceKey,
+          host: measureElement(host),
+          body: measureElement(host.parentElement as HTMLElement | null),
+          panel: measureElement(host.closest?.('.ue-panel') as HTMLElement | null)
+        })
+      }
       try { if (rafId != null) window.cancelAnimationFrame?.(rafId) } catch {}
       try { if (t0 != null) window.clearTimeout?.(t0) } catch {}
       try { if (t250 != null) window.clearTimeout?.(t250) } catch {}

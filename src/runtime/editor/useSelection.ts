@@ -75,6 +75,7 @@ export function useSelection(toolRef: ToolRef, opts: Opts) {
     for (const entry of storeRef.current.values()) {
       for (const [oid, g] of entry.byOid.entries()) out.push({ layer: entry.layer, oid, graphic: g })
     }
+    selectedItemsRef.current = out
     setSelectedItems(out)
   }, [])
 
@@ -188,10 +189,58 @@ export function useSelection(toolRef: ToolRef, opts: Opts) {
     await applyHighlights()
   }, [applyHighlights, isSelectableLayer, rebuildState, cfgRef])
 
-  return {
+  const selectGraphics = React.useCallback(async (graphics: Graphic[], mode: SelectMode) => {
+    const list = (graphics || []).filter(Boolean)
+    if (!list.length) return
+
+    if (mode === 'replace') storeRef.current.clear()
+
+    let fixedKey = selectedItemsRef.current.length ? layerKey(selectedItemsRef.current[0].layer) : null
+
+    for (const g of list) {
+      const layer = (g as any)?.layer as any
+      if (!isFeatureLayer(layer)) continue
+
+      try { layer.outFields = ['*'] } catch {}
+      try { if (layer?.loadStatus !== 'loaded') await layer.load() } catch {}
+
+      const eff = resolveRuleEffective(cfgRef.current, layer)
+      if (eff.allowAttrUpdate !== true) continue
+
+      const oid = getGraphicOid(g)
+      if (oid == null) continue
+
+      const k = layerKey(layer)
+      if ((mode === 'add' || mode === 'remove') && fixedKey && fixedKey !== k) continue
+      if (!fixedKey && mode !== 'replace') fixedKey = k
+
+      if (mode === 'remove') {
+        const entry = storeRef.current.get(k)
+        if (entry) entry.byOid.delete(oid)
+        continue
+      }
+
+      let entry = storeRef.current.get(k)
+      if (!entry) {
+        entry = { layer, byOid: new Map<number, Graphic>() }
+        storeRef.current.set(k, entry)
+      }
+      entry.byOid.set(oid, g)
+    }
+
+    for (const [k, entry] of storeRef.current.entries()) {
+      if (entry.byOid.size === 0) storeRef.current.delete(k)
+    }
+
+    rebuildState()
+    await applyHighlights()
+  }, [applyHighlights, rebuildState, cfgRef])
+
+  return React.useMemo(() => ({
     selectedItems,
     setupOnView,
     clearSelection,
-    selectGraphic
-  }
+    selectGraphic,
+    selectGraphics
+  }), [selectedItems, setupOnView, clearSelection, selectGraphic, selectGraphics])
 }

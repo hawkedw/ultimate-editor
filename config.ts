@@ -25,10 +25,12 @@ export interface LayerRule {
 export interface Config {
   mapWidgetId?: string
   layers: LayerRule[]
+  snappingMode?: 'full' | 'light'
 }
 
 export type IMConfig = ImmutableObject<Config>
 
 export const defaultConfig: Config = {
-  layers: []
+  layers: [],
+  snappingMode: 'full'
 }
