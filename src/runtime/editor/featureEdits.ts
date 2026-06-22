@@ -1,3 +1,7 @@
+import Graphic from 'esri/Graphic'
+import { layerKey } from '../utils/ueUtils'
+import { perfLog, perfNow, type UltimateEditorPerfContext } from '../debug'
+
 export function cloneGeometry (g: any) {
   try { return g?.clone?.() ?? g ?? null } catch { return g ?? null }
 }
@@ -16,17 +20,81 @@ export function sanitizeAttrsForAdd (layer: any, attrs: any = {}) {
   return out
 }
 
-export async function fetchFullGraphic (layer: any, oid: number) {
+function getLayerFieldNames (layer: any): string[] {
+  return ((layer?.fields || []) as any[])
+    .map((f: any) => String(f?.name || ''))
+    .filter(Boolean)
+}
+
+export function getMissingLayerFieldNames (layer: any, graphic: any): string[] {
+  const attrs = graphic?.attributes || {}
+  return getLayerFieldNames(layer).filter(name => !Object.prototype.hasOwnProperty.call(attrs, name))
+}
+
+function mergeFetchedAttributesWithBaseGraphic (layer: any, baseGraphic: any, fetchedGraphic: any) {
+  if (!baseGraphic || !fetchedGraphic) return fetchedGraphic ?? null
+  if (fetchedGraphic?.geometry) return fetchedGraphic
+
+  const merged = new Graphic({
+    geometry: baseGraphic.geometry,
+    attributes: {
+      ...(baseGraphic.attributes || {}),
+      ...(fetchedGraphic.attributes || {})
+    }
+  })
+  ;(merged as any).layer = layer
+  return merged
+}
+
+interface FetchFullGraphicOptions {
+  baseGraphic?: any
+  outFields?: string[]
+  returnGeometry?: boolean
+  reason?: string
+  perf?: UltimateEditorPerfContext | null
+}
+
+export async function fetchFullGraphic (layer: any, oid: number, options: FetchFullGraphicOptions = {}) {
+  const reason = options.reason || 'fetch-full-graphic'
+  const t0 = perfNow()
   await layer.load?.()
+  perfLog(options.perf, 'layer load before feature query complete', {
+    reason,
+    layer: layerKey(layer),
+    oid,
+    loadMs: Math.round((perfNow() - t0) * 10) / 10
+  })
 
   const q = layer.createQuery()
   q.objectIds = [oid]
-  q.outFields = ['*']
-  q.returnGeometry = true
-  ;(q as any).returnDomainNames = false
+  const requestedFields = options.outFields?.length ? options.outFields : ['*']
+  q.outFields = requestedFields
+  // ULTIMATE_EDITOR_PERF_OPTIMIZATION: hitTest already gives us geometry for normal selection.
+  // Fetch only attributes when possible; this reduces FeatureServer payload on large polygons.
+  q.returnGeometry = options.returnGeometry ?? !options.baseGraphic?.geometry
+  q.returnDomainNames = false
 
+  const queryStart = perfNow()
+  perfLog(options.perf, 'feature query start', {
+    reason,
+    layer: layerKey(layer),
+    oid,
+    outFields: requestedFields.length === 1 && requestedFields[0] === '*' ? '*' : requestedFields.length,
+    returnGeometry: q.returnGeometry
+  })
   const fs = await layer.queryFeatures(q)
-  return fs?.features?.[0] ?? null
+  const fetched = fs?.features?.[0] ?? null
+  const merged = mergeFetchedAttributesWithBaseGraphic(layer, options.baseGraphic, fetched)
+  perfLog(options.perf, 'feature query complete', {
+    reason,
+    layer: layerKey(layer),
+    oid,
+    queryMs: Math.round((perfNow() - queryStart) * 10) / 10,
+    featureCount: fs?.features?.length ?? 0,
+    attrCount: Object.keys(merged?.attributes || {}).length,
+    hasGeometry: !!merged?.geometry
+  })
+  return merged
 }
 
 export async function queryGraphicsByOids (layer: any, oids: any[]): Promise<any[]> {

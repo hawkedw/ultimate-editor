@@ -13,14 +13,14 @@ import type { DivideSettings } from '../components/DividePanel'
 
 import { useSelection } from './useSelection'
 import { useGeometry } from './useGeometry'
-import { dlog, isDebugEnabled } from '../debug'
+import { dlog, isDebugEnabled, perfAttach, perfLog, perfStart } from '../debug'
 import {
   captureAndDisablePopups,
   disablePopupsForNewLayers,
   restorePopups,
   type PopupViewState
 } from './popupManager'
-import { fetchFullGraphic, queryGraphicsByOids, replaceFeatureSet, sanitizeAttrsForAdd } from './featureEdits'
+import { fetchFullGraphic, getMissingLayerFieldNames, queryGraphicsByOids, replaceFeatureSet, sanitizeAttrsForAdd } from './featureEdits'
 import { makeHistoryEntry } from './history'
 import { buildDivideGeometries, parseDivideNumber, type DivideDirection } from './divideGeometry'
 
@@ -287,6 +287,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const dividePreviewLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
   const divideDrawStartRef = React.useRef<any>(null)
   const popupStateRef = React.useRef<PopupViewState | null>(null)
+  const clickSeqRef = React.useRef(0)
 
   const sel = selection.selectedItems || []
   const selRef = React.useRef<any[]>([])
@@ -642,11 +643,32 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       if (mergeMode) return
       try { v.popup?.close?.() } catch {}
 
+      const clickSeq = ++clickSeqRef.current
       const t = toolRef.current
       const fixedKey = sel.length ? layerKey(sel[0].layer) : null
+      const perf = perfStart('map click received', {
+        tool: t,
+        screenX: ev?.x,
+        screenY: ev?.y,
+        fixedLayer: fixedKey
+      })
+      const isStaleClick = (stage: string) => {
+        if (clickSeq === clickSeqRef.current) return false
+        perfLog(perf, 'stale click ignored', {
+          stage,
+          clickSeq,
+          latestClickSeq: clickSeqRef.current
+        })
+        return true
+      }
 
+      perfLog(perf, 'hitTest start')
       const ht = await v.hitTest(ev)
+      if (isStaleClick('hitTest')) return
       const results = ((ht?.results || []) as any[])
+      perfLog(perf, 'hitTest complete', {
+        resultCount: results.length
+      })
 
       let pickedRaw: any = null
       for (const r of results) {
@@ -660,6 +682,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       }
 
       if (!pickedRaw) {
+        perfLog(perf, 'no editable feature picked')
         if (geomChecked) {
           geometry.cancel()
           selection.clearSelection()
@@ -678,26 +701,57 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
       const mode: any = t === 'remove' ? 'remove' : t === 'add' ? 'add' : 'replace'
       const oid = getOid(pickedRaw.layer, pickedRaw)
+      perfLog(perf, 'feature picked from hitTest', {
+        mode,
+        layer: layerKey(pickedRaw.layer),
+        oid,
+        attrCount: Object.keys(pickedRaw?.attributes || {}).length,
+        hasGeometry: !!pickedRaw?.geometry
+      })
 
-      if (mode === 'replace') {
-        try {
-          let g = pickedRaw
-          if (oid != null) { const full = await fetchFullGraphic(pickedRaw.layer, oid); if (full) g = full }
-          await selection.selectGraphic(g, 'replace')
-        } catch (e) {
-          console.warn('[UE] click full fetch failed', e)
-          await selection.selectGraphic(pickedRaw, 'replace')
-        } finally { try { refreshEditableLayers(v) } catch {} }
-        return
+      const prepareSelectedGraphic = async () => {
+        let g = pickedRaw
+        if (oid != null) {
+          const layerFields = ((pickedRaw.layer?.fields || []) as any[]).filter((f: any) => !!f?.name)
+          const missingFields = getMissingLayerFieldNames(pickedRaw.layer, pickedRaw)
+          if (!layerFields.length || missingFields.length) {
+            // ULTIMATE_EDITOR_PERF_OPTIMIZATION: normal click selection already has geometry from hitTest.
+            // Query only missing attributes, and fall back to "*" only when layer fields are not loaded yet.
+            const full = await fetchFullGraphic(pickedRaw.layer, oid, {
+              baseGraphic: pickedRaw,
+              outFields: layerFields.length ? missingFields : ['*'],
+              returnGeometry: false,
+              reason: 'map-click-selected-feature',
+              perf
+            })
+            if (isStaleClick('feature-query')) return null
+            if (full) g = full
+          } else {
+            perfLog(perf, 'hitTest attributes already complete', {
+              layer: layerKey(pickedRaw.layer),
+              oid,
+              attrCount: Object.keys(pickedRaw?.attributes || {}).length
+            })
+          }
+        }
+        perfAttach(g, perf)
+        return g
       }
 
       try {
-        let g = pickedRaw
-        if (oid != null) { const full = await fetchFullGraphic(pickedRaw.layer, oid); if (full) g = full }
-        await selection.selectGraphic(g, mode)
+        const g = await prepareSelectedGraphic()
+        if (!g || isStaleClick('selectGraphic')) return
+        await selection.selectGraphic(g, mode, perf)
+        perfLog(perf, 'selectGraphic complete', {
+          mode,
+          layer: layerKey(pickedRaw.layer),
+          oid
+        })
       } catch (e) {
-        console.warn('[UE] click full fetch failed', e)
-        await selection.selectGraphic(pickedRaw, mode)
+        console.warn('[UE] click attribute fetch failed', e)
+        if (isStaleClick('fallback-selectGraphic')) return
+        perfAttach(pickedRaw, perf)
+        await selection.selectGraphic(pickedRaw, mode, perf)
       } finally { try { refreshEditableLayers(v) } catch {} }
     })
 

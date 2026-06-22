@@ -2,7 +2,7 @@
 import { React } from 'jimu-core'
 import FeatureForm from 'esri/widgets/FeatureForm'
 import type { FieldPolicy } from '../editor/useUltimateEditor'
-import { dlog, dwarn, isDebugEnabled } from '../debug'
+import { dlog, dwarn, isDebugEnabled, perfGet, perfLog } from '../debug'
 
 interface Props {
   item: any
@@ -78,6 +78,7 @@ const FeatureFormPanel = ({
   const layerTitle = layer?.title || 'Объект'
   const oid = getItemOid(item, layer)
   const layerStableKey = React.useMemo(() => getLayerStableKey(layer), [layer])
+  const perf = React.useMemo(() => perfGet(item?.graphic), [item?.graphic])
 
   const policy = React.useMemo(() => {
     if (!layer) {
@@ -195,6 +196,17 @@ const FeatureFormPanel = ({
     const host = hostRef.current
     const seq = ++initSeqRef.current
     const debug = isDebugEnabled()
+    perfLog(perf, 'form init effect start', {
+      seq,
+      formInstanceKey,
+      isNew: !!isNew,
+      oid,
+      layer: layerTitle,
+      hasGraphic: !!item?.graphic,
+      hasLayer: !!layer,
+      hasTemplate: !!formTemplate,
+      fieldCount: getElementCount(formTemplate)
+    })
 
     if (debug) {
       dlog('[UE][FFP] effect start', {
@@ -213,7 +225,15 @@ const FeatureFormPanel = ({
       })
     }
 
-    if (!host || !item?.graphic || !layer) return
+    if (!host || !item?.graphic || !layer) {
+      perfLog(perf, 'form init skipped', {
+        seq,
+        hasHost: !!host,
+        hasGraphic: !!item?.graphic,
+        hasLayer: !!layer
+      })
+      return
+    }
     host.innerHTML = ''
 
     let ff: any = null
@@ -240,8 +260,16 @@ const FeatureFormPanel = ({
     } as any)
 
     try {
+      perfLog(perf, 'feature form constructor start', {
+        seq,
+        withTemplate: true
+      })
       ff = createForm(true)
       featureFormRef.current = ff
+      perfLog(perf, 'feature form constructor complete', {
+        seq,
+        withTemplate: true
+      })
       if (debug) {
         dlog('[UE][FFP] init ok', {
           seq,
@@ -257,8 +285,14 @@ const FeatureFormPanel = ({
       dwarn('[UE][FFP] FeatureForm init with template failed, retrying without template', e)
       try {
         host.innerHTML = ''
+        perfLog(perf, 'feature form fallback constructor start', {
+          seq
+        })
         ff = createForm(false)
         featureFormRef.current = ff
+        perfLog(perf, 'feature form fallback constructor complete', {
+          seq
+        })
         if (debug) {
           dlog('[UE][FFP] fallback init ok', {
             seq,
@@ -273,9 +307,27 @@ const FeatureFormPanel = ({
       }
     }
 
+    try {
+      rafId = window.requestAnimationFrame?.(() => {
+        perfLog(perf, 'form first animation frame', {
+          seq,
+          hasEsriForm: !!host.querySelector?.('.esri-feature-form'),
+          hostHeight: host.offsetHeight,
+          scrollHeight: host.scrollHeight
+        })
+        if (debug) logDelayed('after raf')
+      }) ?? null
+    } catch {}
+    t0 = window.setTimeout?.(() => {
+      perfLog(perf, 'form rendered timeout 0', {
+        seq,
+        hasEsriForm: !!host.querySelector?.('.esri-feature-form'),
+        hostHeight: host.offsetHeight,
+        scrollHeight: host.scrollHeight
+      })
+      if (debug) logDelayed('after timeout 0')
+    }, 0)
     if (debug) {
-      try { rafId = window.requestAnimationFrame?.(() => { logDelayed('after raf') }) ?? null } catch {}
-      t0 = window.setTimeout?.(() => { logDelayed('after timeout 0') }, 0)
       t250 = window.setTimeout?.(() => { logDelayed('after timeout 250') }, 250)
     }
 
