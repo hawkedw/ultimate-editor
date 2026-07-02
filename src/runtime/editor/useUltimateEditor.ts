@@ -130,11 +130,25 @@ function dividePreviewPolygonSymbol () {
 }
 
 function divideDirectionSymbol () {
-  return { type: 'simple-line', color: [255, 196, 0, 1], width: 2.25, style: 'solid' } as any
+  return { type: 'simple-line', color: [255, 48, 48, 1], width: 2.5, style: 'dash' } as any
 }
 
 function divideArrowSymbol () {
-  return { type: 'simple-line', color: [255, 255, 255, 1], width: 2.5, style: 'solid' } as any
+  return { type: 'simple-line', color: [255, 48, 48, 1], width: 3, style: 'solid' } as any
+}
+
+function divideDrawPointSymbol () {
+  return {
+    type: 'simple-marker',
+    style: 'circle',
+    color: [255, 48, 48, 1],
+    size: 10,
+    outline: { color: [255, 255, 255, 0.95], width: 1.5 }
+  } as any
+}
+
+function divideDrawLineSymbol () {
+  return { type: 'simple-line', color: [255, 48, 48, 1], width: 2.5, style: 'dash' } as any
 }
 
 function dividePreviewPartSymbol () {
@@ -142,7 +156,7 @@ function dividePreviewPartSymbol () {
     type: 'simple-fill',
     style: 'none',
     color: [0, 0, 0, 0],
-    outline: { color: [255, 255, 255, 0.92], width: 1.5, style: 'dash' }
+    outline: { color: [255, 48, 48, 0.95], width: 1.75, style: 'dash' }
   } as any
 }
 
@@ -286,6 +300,8 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
   const mergePreviewGraphicRef = React.useRef<__esri.Graphic | null>(null)
   const dividePreviewLayerRef = React.useRef<__esri.GraphicsLayer | null>(null)
   const divideDrawStartRef = React.useRef<any>(null)
+  const divideDrawPointGraphicRef = React.useRef<__esri.Graphic | null>(null)
+  const divideDrawLineGraphicRef = React.useRef<__esri.Graphic | null>(null)
   const popupStateRef = React.useRef<PopupViewState | null>(null)
   const clickSeqRef = React.useRef(0)
 
@@ -318,6 +334,50 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   function clearDividePreview () {
     try { dividePreviewLayerRef.current?.removeAll?.() } catch {}
+    divideDrawPointGraphicRef.current = null
+    divideDrawLineGraphicRef.current = null
+  }
+
+  function clearDivideDrawFeedback () {
+    const layer = dividePreviewLayerRef.current as any
+    try {
+      if (divideDrawPointGraphicRef.current) layer?.remove?.(divideDrawPointGraphicRef.current)
+      if (divideDrawLineGraphicRef.current) layer?.remove?.(divideDrawLineGraphicRef.current)
+    } catch {}
+    divideDrawPointGraphicRef.current = null
+    divideDrawLineGraphicRef.current = null
+  }
+
+  function updateDivideDrawFeedback (start: any, end?: any) {
+    const v = viewRef.current
+    if (!v || !start || !divideModeRef.current) return
+    ensureDividePreviewLayer(v)
+    const layer = dividePreviewLayerRef.current as any
+    if (!divideDrawPointGraphicRef.current) {
+      const marker = new Graphic({ geometry: start, symbol: divideDrawPointSymbol() } as any)
+      divideDrawPointGraphicRef.current = marker as any
+      try { layer?.add?.(marker) } catch {}
+    } else {
+      try { (divideDrawPointGraphicRef.current as any).geometry = start } catch {}
+    }
+
+    if (!end) {
+      try {
+        if (divideDrawLineGraphicRef.current) layer?.remove?.(divideDrawLineGraphicRef.current)
+      } catch {}
+      divideDrawLineGraphicRef.current = null
+      return
+    }
+
+    const sr = start.spatialReference || end.spatialReference || v.spatialReference
+    const line = lineGeometry(start, end, sr)
+    if (!divideDrawLineGraphicRef.current) {
+      const lineGraphic = new Graphic({ geometry: line, symbol: divideDrawLineSymbol() } as any)
+      divideDrawLineGraphicRef.current = lineGraphic as any
+      try { layer?.add?.(lineGraphic) } catch {}
+    } else {
+      try { (divideDrawLineGraphicRef.current as any).geometry = line } catch {}
+    }
   }
 
   function updateDividePreview (
@@ -375,6 +435,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     divideReversedRef.current = false
     clearDividePreview()
     divideDrawStartRef.current = null
+    clearDivideDrawFeedback()
     setMapCursor(viewRef.current, 'default')
   }
 
@@ -611,7 +672,32 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
         geometry.sketchModeRef.current === 'updating'
       ) return
       if (isBoxDraggingRef.current) return
+      if (divideModeRef.current && divideDirectionToolRef.current === 'draw-line') {
+        try { ev.stopPropagation?.() } catch {}
+        try { v.popup?.close?.() } catch {}
+        const mapPoint = v.toMap({ x: ev.x, y: ev.y })
+        if (!mapPoint) return
+
+        const start = divideDrawStartRef.current
+        if (!start) {
+          divideDrawStartRef.current = mapPoint
+          updateDivideDrawFeedback(mapPoint, null)
+          return
+        }
+
+        if (start.x === mapPoint.x && start.y === mapPoint.y) return
+
+        divideDrawStartRef.current = null
+        clearDivideDrawFeedback()
+        setDivideDirectionAndPreview({ start, end: mapPoint, reversed: divideReversedRef.current })
+        setDivideDirectionTool(null)
+        divideDirectionToolRef.current = null
+        setMapCursor(viewRef.current, 'default')
+        return
+      }
       if (divideModeRef.current && divideDirectionToolRef.current === 'pick-edge') {
+        clearDivideDrawFeedback()
+        divideDrawStartRef.current = null
         try { ev.stopPropagation?.() } catch {}
         try { v.popup?.close?.() } catch {}
         const ht = await v.hitTest(ev)
@@ -784,6 +870,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       if (divideModeRef.current && divideDirectionToolRef.current === 'draw-line') {
         if (e.action === 'start') {
           divideDrawStartRef.current = v.toMap({ x: e.x, y: e.y })
+          updateDivideDrawFeedback(divideDrawStartRef.current, null)
           e.stopPropagation()
           return
         }
@@ -802,6 +889,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
           const end = v.toMap({ x: e.x, y: e.y })
           divideDrawStartRef.current = null
           e.stopPropagation()
+          clearDivideDrawFeedback()
           if (!start || !end) return
           setDivideDirectionAndPreview({ start, end, reversed: divideReversedRef.current })
           setDivideDirectionTool(null)
@@ -853,6 +941,15 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       }
     })
 
+    const hPointerMove = v.on('pointer-move', (e: any) => {
+      if (!divideModeRef.current || divideDirectionToolRef.current !== 'draw-line') return
+      const start = divideDrawStartRef.current
+      if (!start) return
+      const end = v.toMap({ x: e.x, y: e.y })
+      if (!end) return
+      updateDivideDrawFeedback(start, end)
+    })
+
     const viewEl = v?.container as HTMLElement | null
     const onContextMenu = (e: MouseEvent) => {
       if (!shouldRmbPanMap()) return
@@ -868,6 +965,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       clearMergePreview()
       try { hClick.remove() } catch {}
       try { hDrag.remove() } catch {}
+      try { hPointerMove.remove() } catch {}
       try { viewEl?.removeEventListener('contextmenu', onContextMenu, true) } catch {}
       try { hPopup?.remove?.() } catch {}
       try { hLayers?.remove?.() } catch {}
@@ -885,6 +983,8 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
       try { dividePreviewLayerRef.current?.destroy?.() } catch {}
       dividePreviewLayerRef.current = null
       divideDrawStartRef.current = null
+      divideDrawPointGraphicRef.current = null
+      divideDrawLineGraphicRef.current = null
       dragStartRef.current = null
       isBoxDraggingRef.current = false
       setMapCursor(v, 'default')
@@ -1111,6 +1211,8 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     divideReversedRef.current = false
     setDivideDirectionTool(null)
     divideDirectionToolRef.current = null
+    divideDrawStartRef.current = null
+    clearDivideDrawFeedback()
     setDivideDirectionAndPreview(null)
     setMapCursor(viewRef.current, 'default')
     updateDividePreview(null)
@@ -1126,6 +1228,8 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     const next: DivideDirectionTool = active ? null : 'pick-edge'
     setDivideDirectionTool(next)
     divideDirectionToolRef.current = next
+    divideDrawStartRef.current = null
+    clearDivideDrawFeedback()
     setMapCursor(viewRef.current, next ? 'crosshair' : 'default')
   }, [])
 
@@ -1136,6 +1240,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
     setDivideDirectionTool(next)
     divideDirectionToolRef.current = next
     divideDrawStartRef.current = null
+    clearDivideDrawFeedback()
     setMapCursor(viewRef.current, next ? 'crosshair' : 'default')
   }, [])
 

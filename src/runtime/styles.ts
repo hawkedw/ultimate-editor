@@ -285,6 +285,18 @@ export const rootCss = css`
     border-color: rgba(220, 90, 90, 0.56);
   }
 
+  .ue-btn--success {
+    background: #1f4b2d;
+    border-color: rgba(79, 210, 118, 0.58);
+    color: #eaffef;
+    font-weight: 700;
+  }
+
+  .ue-btn--success:hover:not(:disabled) {
+    background: #276039;
+    border-color: rgba(96, 230, 135, 0.72);
+  }
+
   .ue-form-hint,
   .ue-hint {
     margin: 0 0 10px;
@@ -577,6 +589,8 @@ export const rootCss = css`
     flex: 0 0 auto;
     display: flex;
     justify-content: flex-end;
+    gap: 8px;
+    margin: 10px 0 12px;
     padding-top: 10px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }

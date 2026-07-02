@@ -80,9 +80,6 @@ const DividePanel = ({
     <div className='ue-form-host ue-divide-panel'>
       <div className='ue-form-header'>
         <div className='ue-form-title'>{layerTitle}</div>
-        <div className='ue-form-actions'>
-          <button type='button' className='ue-btn ue-btn--secondary ue-btn--sm' onClick={onCancel}>Отмена</button>
-        </div>
       </div>
 
       <div className='ue-form-body'>
@@ -173,6 +170,15 @@ const DividePanel = ({
           </div>
         </div>
 
+        <div className='ue-divide-footer'>
+          <button type='button' className='ue-btn ue-btn--secondary' onClick={onCancel}>
+            Отмена
+          </button>
+          <button type='button' className='ue-btn ue-btn--success' onClick={handleDivide}>
+            Разбить
+          </button>
+        </div>
+
         {touched && !formOk && (
           <div className='ue-divide-error'>
             {!basisReady && <div>Задайте направление разбиения.</div>}
@@ -181,12 +187,6 @@ const DividePanel = ({
             {!areaOk && <div>Для режима равной площади укажите площадь участка в гектарах.</div>}
           </div>
         )}
-      </div>
-
-      <div className='ue-divide-footer'>
-        <button type='button' className='ue-btn' onClick={handleDivide}>
-          Разбить
-        </button>
       </div>
     </div>
   )
