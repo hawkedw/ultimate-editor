@@ -19,6 +19,26 @@ export function isFeatureLayer(layer: any): layer is FeatureLayer {
   return !!layer && (layer.type === 'feature' || layer.declaredClass === 'esri.layers.FeatureLayer')
 }
 
+function layerServiceUrl(layer: any): string {
+  return String(layer?.url || layer?.sourceJSON?.url || layer?.layerDefinition?.url || '').trim()
+}
+
+function isFeatureServerUrl(url: string): boolean {
+  return /\/FeatureServer(?:\/|$)/i.test(url)
+}
+
+function isMapServerUrl(url: string): boolean {
+  return /\/MapServer(?:\/|$)/i.test(url)
+}
+
+export function isCreatableFeatureAccessLayer(layer: any): layer is FeatureLayer {
+  if (!isFeatureLayer(layer) || layer?.isTable) return false
+  const url = layerServiceUrl(layer)
+  if (!isFeatureServerUrl(url) || isMapServerUrl(url)) return false
+  if (typeof layer?.applyEdits !== 'function') return false
+  return canCreateByLayerCapabilities(layer)
+}
+
 export function oidField(layer: any): string {
   return (layer?.objectIdField as string) || 'OBJECTID'
 }

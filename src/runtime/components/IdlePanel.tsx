@@ -1,7 +1,7 @@
 import { React } from 'jimu-core'
 import type FeatureLayer from 'esri/layers/FeatureLayer'
 import Graphic from 'esri/Graphic'
-import { layerKey } from '../utils/ueUtils'
+import { isCreatableFeatureAccessLayer, layerKey } from '../utils/ueUtils'
 
 interface Props {
   templateLayers: FeatureLayer[]
@@ -227,6 +227,7 @@ const getTemplateItems = async (layers: FeatureLayer[]): Promise<TemplateItem[]>
 
   for (const layer of (layers || [])) {
     try { await layer.load?.() } catch {}
+    if (!isCreatableFeatureAccessLayer(layer)) continue
 
     const layerTitle = (layer as any).title || 'Слой'
     const allTemplates: Array<{ template: __esri.FeatureTemplate, key: string, label: string }> = []

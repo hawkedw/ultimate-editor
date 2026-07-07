@@ -26,6 +26,7 @@ import { buildDivideGeometries, parseDivideNumber, type DivideDirection } from '
 
 import {
   isFeatureLayer,
+  isCreatableFeatureAccessLayer,
   resolveRuleEffective,
   applyDefaultValues,
   applyArcadeDefaults,
@@ -510,7 +511,7 @@ export function useUltimateEditor (props: AllWidgetProps<IMConfig>) {
 
   function refreshEditableLayers (v: any) {
     const all = collectFeatureLayersFromMap(v).filter((l: any) => isFeatureLayer(l) && l.visible)
-    const creatable = all.filter((l: any) => resolveRuleEffective(cfgRef.current, l).allowCreate === true) as FeatureLayer[]
+    const creatable = all.filter((l: any) => isCreatableFeatureAccessLayer(l) && resolveRuleEffective(cfgRef.current, l).allowCreate === true) as FeatureLayer[]
     const attrEditable = all.filter((l: any) => resolveRuleEffective(cfgRef.current, l).allowAttrUpdate === true) as FeatureLayer[]
     const creatableSig = creatable.map((l: any) => layerKey(l)).join('|')
     const attrEditableSig = attrEditable.map((l: any) => layerKey(l)).join('|')
